@@ -545,13 +545,20 @@ function AE_Utility_Panel(thisObj) {
             var cam=c.layers.addCamera("Camera",[c.width/2,c.height/2]);
             var ctl=c.layers.addNull();
             ctl.name="Camera Controller";ctl.threeDLayer=true;ctl.motionBlur=true;ctl.label=16;
-            ctl.moveBefore(cam);cam.parent=ctl;
+
             if(c.selectedLayers.length){
-                var l=c.selectedLayers[0];
-                ctl.startTime=cam.startTime=l.startTime;
-                ctl.inPoint=cam.inPoint=l.inPoint;
-                ctl.outPoint=cam.outPoint=l.outPoint;
+                var sel=c.selectedLayers;
+                var minIn=sel[0].inPoint,maxOut=sel[0].outPoint;
+                for(var i=1;i<sel.length;i++){
+                    if(sel[i].inPoint<minIn)minIn=sel[i].inPoint;
+                    if(sel[i].outPoint>maxOut)maxOut=sel[i].outPoint;
+                }
+                cam.startTime=ctl.startTime=minIn;
+                cam.inPoint=ctl.inPoint=minIn;
+                cam.outPoint=ctl.outPoint=maxOut;
             }
+
+            ctl.moveBefore(cam);cam.parent=ctl;
             app.endUndoGroup();
         });
 
