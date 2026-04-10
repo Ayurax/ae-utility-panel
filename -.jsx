@@ -417,6 +417,17 @@ function centerAnchorPoint_SelectedLayers() {
 // ============================================================================
 // RESET TRANSFORMS
 // ============================================================================
+// Helper to strip keyframes, expressions, and reset the value
+function hardReset(prop, val) {
+    if (prop && prop.canSetExpression) {
+        while (prop.numKeys > 0) {
+            prop.removeKey(1);
+        }
+        if (prop.expression !== "") prop.expression = "";
+        prop.setValue(val);
+    }
+}
+
 function resetLayerTransforms() {
     var comp = app.project.activeItem;
     if (!comp || !(comp instanceof CompItem)) return;
@@ -425,20 +436,6 @@ function resetLayerTransforms() {
     if (sel.length === 0) return;
 
     app.beginUndoGroup("AE Panel - Hard Reset Transforms");
-
-    // Helper to strip keyframes, expressions, and reset the value
-    function hardReset(prop, val) {
-        if (prop && prop.canSetExpression) {
-            // Remove all keyframes from back to front
-            while (prop.numKeys > 0) {
-                prop.removeKey(1);
-            }
-            // Clear any expressions
-            if (prop.expression !== "") prop.expression = "";
-            // Apply the default value
-            prop.setValue(val);
-        }
-    }
 
     for (var i = 0; i < sel.length; i++) {
         var l = sel[i];
@@ -598,8 +595,8 @@ function AE_Utility_Panel(thisObj) {
         var g = win.add("group");
         g.orientation = "column";
         g.alignChildren = "fill";
-        g.margins = 8;
-        g.spacing = 6;
+        g.margins = 6;
+        g.spacing = 4;
 
         // ---------- helpers ----------
         function getComp() {
@@ -643,6 +640,7 @@ function AE_Utility_Panel(thisObj) {
             section.spacing = 3;
 
             var titleText = section.add("statictext", undefined, title);
+            titleText.alignment = ["left", "center"];
 
             var btnGroup = section.add("group");
             btnGroup.orientation = "row";
@@ -664,21 +662,20 @@ function AE_Utility_Panel(thisObj) {
         // ===== CREATE =====
         var createSec = addSection("Create");
 
-        // Row 1: Null, ADJ
-        var row1 = createSec.section.add("group");
-        row1.orientation = "row";
-        row1.alignChildren = "left";
-        row1.margins = 0;
-        row1.spacing = 2;
+        var createRow = createSec.section.add("group");
+        createRow.orientation = "row";
+        createRow.alignChildren = "left";
+        createRow.margins = 0;
+        createRow.spacing = 2;
 
-        btn(row1,"Null","Create Null",function(){
+        btn(createRow,"Null","Create Null",function(){
             perSelection(function(c,l){
                 var n=c.layers.addNull(); n.label=1;
                 if(l){n.startTime=l.startTime;n.inPoint=l.inPoint;n.outPoint=l.outPoint;n.moveBefore(l);}
             },true);
         });
 
-        btn(row1,"ADJ","Adjustment Layer",function(){
+        btn(createRow,"ADJ","Adjustment Layer",function(){
             perSelection(function(c,l,i){
                 var a=c.layers.addSolid([1,1,1],"Adj "+(i+1),c.width,c.height,c.pixelAspect);
                 a.adjustmentLayer=true;a.label=11;
@@ -686,14 +683,7 @@ function AE_Utility_Panel(thisObj) {
             },true);
         });
 
-        // Row 2: Solid, Text
-        var row2 = createSec.section.add("group");
-        row2.orientation = "row";
-        row2.alignChildren = "left";
-        row2.margins = 0;
-        row2.spacing = 2;
-
-        btn(row2, "Solid", "Create Solid (Eyedropper)", function () {
+        btn(createRow, "Solid", "Create Solid (Eyedropper)", function () {
             var c = getComp();
             if (!c) return;
             var prevLayer = c.selectedLayers.length ? c.selectedLayers[0] : null;
@@ -721,7 +711,7 @@ function AE_Utility_Panel(thisObj) {
             app.endUndoGroup();
         });
 
-        btn(row2,"Text","Create Text",function(){
+        btn(createRow,"Text","Create Text",function(){
             perSelection(function(c,l,i){
                 var t=c.layers.addText("Text "+(i+1)); t.label=9;
                 if(l){t.startTime=l.startTime;t.inPoint=l.inPoint;t.outPoint=l.outPoint;t.moveBefore(l);}
@@ -774,7 +764,96 @@ function AE_Utility_Panel(thisObj) {
             app.endUndoGroup();
         });
 
-        btn(utilSec.btnGroup,"Rst","Reset Transforms (Pos, Scale, Rot, Opacity)",resetLayerTransforms,25);
+        // ===== TRANSFORM (COLLAPSIBLE) =====
+        var resetSec = g.add("group");
+        resetSec.orientation = "column";
+        resetSec.alignChildren = "fill";
+        resetSec.margins = 0;
+        resetSec.spacing = 3;
+
+        var resetHeaderBtn = resetSec.add("button", undefined, "Transform ▼");
+        resetHeaderBtn.preferredSize = [undefined, 18];
+        resetHeaderBtn.helpTip = "Toggle Transform Tools";
+
+        var resetContent = resetSec.add("group");
+        resetContent.orientation = "column";
+        resetContent.alignChildren = "left";
+        resetContent.margins = 0;
+        resetContent.spacing = 2;
+        resetContent.visible = false;
+        resetContent.maximumSize = [9999, 0];
+
+        var isResetExpanded = false;
+
+        resetHeaderBtn.onClick = function() {
+            isResetExpanded = !isResetExpanded;
+            resetContent.visible = isResetExpanded;
+            resetContent.maximumSize = isResetExpanded ? [9999, 9999] : [9999, 0];
+            resetHeaderBtn.text = isResetExpanded ? "Transform ▲" : "Transform ▼";
+            win.layout.layout(true);
+        };
+
+        var resetRow = resetContent.add("group");
+        resetRow.orientation = "row";
+        resetRow.alignChildren = "left";
+        resetRow.margins = 0;
+        resetRow.spacing = 2;
+
+        btn(resetRow, "Pos", "Reset Position to center of comp", function(){
+            var c = getComp(); if(!c) return;
+            var sel = c.selectedLayers; if(sel.length === 0) return;
+            app.beginUndoGroup("AE Panel - Reset Position");
+            for (var i = 0; i < sel.length; i++) {
+                var l = sel[i];
+                var defaultPos = l.threeDLayer ? [c.width/2, c.height/2, 0] : [c.width/2, c.height/2];
+                hardReset(l.position, defaultPos);
+            }
+            app.endUndoGroup();
+        }, 26);
+
+        btn(resetRow, "Scl", "Reset Scale to 100%", function(){
+            var c = getComp(); if(!c) return;
+            var sel = c.selectedLayers; if(sel.length === 0) return;
+            app.beginUndoGroup("AE Panel - Reset Scale");
+            for (var i = 0; i < sel.length; i++) {
+                var l = sel[i];
+                var defaultScale = l.threeDLayer ? [100, 100, 100] : [100, 100];
+                hardReset(l.scale, defaultScale);
+            }
+            app.endUndoGroup();
+        }, 26);
+
+        btn(resetRow, "Rot", "Reset Rotation to 0", function(){
+            var c = getComp(); if(!c) return;
+            var sel = c.selectedLayers; if(sel.length === 0) return;
+            app.beginUndoGroup("AE Panel - Reset Rotation");
+            for (var i = 0; i < sel.length; i++) {
+                var l = sel[i];
+                if (l.threeDLayer) {
+                    hardReset(l.orientation, [0, 0, 0]);
+                    hardReset(l.rotationX, 0);
+                    hardReset(l.rotationY, 0);
+                    hardReset(l.rotationZ, 0);
+                } else {
+                    hardReset(l.rotation, 0);
+                }
+            }
+            app.endUndoGroup();
+        }, 26);
+
+        btn(resetRow, "Opa", "Reset Opacity to 100%", function(){
+            var c = getComp(); if(!c) return;
+            var sel = c.selectedLayers; if(sel.length === 0) return;
+            app.beginUndoGroup("AE Panel - Reset Opacity");
+            for (var i = 0; i < sel.length; i++) {
+                hardReset(sel[i].opacity, 100);
+            }
+            app.endUndoGroup();
+        }, 26);
+
+        btn(resetRow, "All", "Reset ALL transforms (Position, Scale, Rotation, Opacity)", function(){
+            resetLayerTransforms();
+        }, 26);
 
         addSeparator();
 
@@ -800,54 +879,6 @@ function AE_Utility_Panel(thisObj) {
             }
 
             ctl.moveBefore(cam);cam.parent=ctl;
-            app.endUndoGroup();
-        });
-
-        addSeparator();
-
-        // ===== LAYER OPS =====
-        var layerSec = addSection("Layer Ops");
-        btn(layerSec.btnGroup,"De","Decompose Precomp",decomposeSelectedPrecomps_Advanced);
-
-        btn(layerSec.btnGroup,"PreComp","Precompose layers separately",function(){
-            var comp = app.project.activeItem;
-            if (!(comp instanceof CompItem)) {
-                alert("Select a composition.");
-                return;
-            }
-
-            var selectedLayers = comp.selectedLayers;
-            if (!selectedLayers.length) {
-                alert("Select at least one layer.");
-                return;
-            }
-
-            app.beginUndoGroup("AE Panel - Precompose");
-
-            var layerData = [];
-            for (var i = 0; i < selectedLayers.length; i++) {
-                var layer = selectedLayers[i];
-                layerData.push({
-                    index: layer.index,
-                    startTime: layer.startTime,
-                    inPoint: layer.inPoint,
-                    outPoint: layer.outPoint
-                });
-            }
-
-            layerData.sort(function (a, b) { return b.index - a.index; });
-
-            for (var i = 0; i < layerData.length; i++) {
-                var data = layerData[i];
-                comp.layers.precompose([data.index], "PreComp " + (i + 1), true);
-                var newLayer = comp.layer(data.index);
-                if (newLayer) {
-                    newLayer.startTime = data.startTime;
-                    newLayer.inPoint = data.inPoint;
-                    newLayer.outPoint = data.outPoint;
-                }
-            }
-
             app.endUndoGroup();
         });
 
@@ -958,15 +989,87 @@ function AE_Utility_Panel(thisObj) {
             win.layout.layout(true);
         };
 
-        // --- ROW 1: Basic Tools ---
-        var tRow1 = toolsContent.add("group");
+        // --- ROW 1: Layer Ops ---
+        var toolsLayerSec = toolsContent.add("group");
+        toolsLayerSec.orientation = "column";
+        toolsLayerSec.alignChildren = "left";
+        toolsLayerSec.margins = 0;
+        toolsLayerSec.spacing = 1;
+
+        toolsLayerSec.add("statictext", undefined, "Layer");
+
+        var tLayerRow = toolsLayerSec.add("group");
+        tLayerRow.orientation = "row";
+        tLayerRow.spacing = 2;
+        btn(tLayerRow, "De", "Decompose Precomp", decomposeSelectedPrecomps_Advanced);
+
+        btn(tLayerRow, "eCon", "Precompose layers separately", function(){
+            var comp = app.project.activeItem;
+            if (!(comp instanceof CompItem)) {
+                alert("Select a composition.");
+                return;
+            }
+
+            var selectedLayers = comp.selectedLayers;
+            if (!selectedLayers.length) {
+                alert("Select at least one layer.");
+                return;
+            }
+
+            app.beginUndoGroup("AE Panel - Precompose");
+
+            var layerData = [];
+            for (var i = 0; i < selectedLayers.length; i++) {
+                var layer = selectedLayers[i];
+                layerData.push({
+                    index: layer.index,
+                    startTime: layer.startTime,
+                    inPoint: layer.inPoint,
+                    outPoint: layer.outPoint
+                });
+            }
+
+            layerData.sort(function (a, b) { return b.index - a.index; });
+
+            for (var i = 0; i < layerData.length; i++) {
+                var data = layerData[i];
+                comp.layers.precompose([data.index], "PreComp " + (i + 1), true);
+                var newLayer = comp.layer(data.index);
+                if (newLayer) {
+                    newLayer.startTime = data.startTime;
+                    newLayer.inPoint = data.inPoint;
+                    newLayer.outPoint = data.outPoint;
+                }
+            }
+
+            app.endUndoGroup();
+        });
+
+        // --- ROW 2: Comp Tools ---
+        var toolsCompSec = toolsContent.add("group");
+        toolsCompSec.orientation = "column";
+        toolsCompSec.alignChildren = "left";
+        toolsCompSec.margins = 0;
+        toolsCompSec.spacing = 1;
+
+        toolsCompSec.add("statictext", undefined, "Comp");
+
+        var tRow1 = toolsCompSec.add("group");
         tRow1.orientation = "row";
         tRow1.spacing = 2;
         btn(tRow1, "Crop", "Crop Comp to Bounding Box", cropCompToSelection, 35);
         btn(tRow1, "Seq", "Sequence Layers End-to-End", sequenceSelectedLayers, 30);
 
-        // --- ROW 2: Custom Script Launcher ---
-        var tRow2 = toolsContent.add("group");
+        // --- ROW 3: Plugin Launcher ---
+        var toolsLaunchSec = toolsContent.add("group");
+        toolsLaunchSec.orientation = "column";
+        toolsLaunchSec.alignChildren = "left";
+        toolsLaunchSec.margins = 0;
+        toolsLaunchSec.spacing = 1;
+
+        toolsLaunchSec.add("statictext", undefined, "Launch");
+
+        var tRow2 = toolsLaunchSec.add("group");
         tRow2.orientation = "row";
         tRow2.spacing = 2;
 
@@ -995,9 +1098,27 @@ function AE_Utility_Panel(thisObj) {
 
             if (sel.indexOf("Menu:") === 0) {
                 var cmd = sel.substring(5);
+                // Strategy 1: findMenuCommandId (works for built-in menus)
                 var id = app.findMenuCommandId(cmd);
-                if (id) app.executeCommand(id);
-                else alert("Could not find Menu Command: " + cmd);
+                if (id && id !== 0) {
+                    app.executeCommand(id);
+                } else {
+                    // Strategy 2: scan IDs to find plugin/panel commands exposed via Window menu
+                    var found = false;
+                    for (var scanId = 1; scanId <= 10000; scanId++) {
+                        try {
+                            var name = app.menuCommandName(scanId);
+                            if (name && name.toLowerCase().indexOf(cmd.toLowerCase()) !== -1) {
+                                app.executeCommand(scanId);
+                                found = true;
+                                break;
+                            }
+                        } catch(e) {}
+                    }
+                    if (!found) {
+                        alert("Could not find plugin or menu command: " + cmd + "\nMake sure the plugin is installed and AE is restarted.");
+                    }
+                }
             } else if (sel.indexOf("File:") === 0) {
                 var f = new File(sel.substring(5));
                 if (f.exists) $.evalFile(f);
@@ -1010,7 +1131,11 @@ function AE_Utility_Panel(thisObj) {
         btn(tRow2, "+", "Add Script or Plugin", function(){
             var type = confirm("Click YES to add a Menu Plugin (e.g. 'Align', 'Duik').\nClick NO to browse for a Script File (.jsx).");
             if (type) {
-                var cmd = prompt("Enter exact Menu Command name:", "Align");
+                var cmd = prompt(
+                    "Enter the plugin name exactly as it appears in AE's Window menu.\n" +
+                    "Examples: 'Flow', 'Duik', 'Align', 'Motion Bro'",
+                    "Flow"
+                );
                 if (cmd) {
                     ddLauncher.add("item", "Menu:" + cmd);
                     ddLauncher.selection = ddLauncher.items.length - 1;
