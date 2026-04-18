@@ -1,4 +1,108 @@
 // ============================================================================
+// PROGRESS FEEDBACK HELPER
+// ============================================================================
+/**
+ * Update progress bar and log feedback.
+ * ExtendScript-safe progress simulation for heavy operations.
+ *
+ * @param {number} current - Current iteration/count
+ * @param {number} total - Total iterations/count
+ * @param {string} label - Optional label for logging (e.g., "Processing layers")
+ */
+function updateProgress(current, total, label) {
+    if (app && app.setProgressBar) {
+        try {
+            app.setProgressBar(current, total);
+        } catch (e) {}
+    }
+
+    // Log progress for debugging
+    if (label) {
+        $.writeln(label + " (" + current + "/" + total + ")");
+    }
+}
+
+// ============================================================================
+// KEYFRAME OPTIMIZATION HELPER
+// ============================================================================
+/**
+ * Efficiently shift keyframe values by caching all keys first.
+ * Preserves interpolation types and easing.
+ * Avoids repeated property access calls which are expensive in ExtendScript.
+ *
+ * @param {Property} prop - The property to shift keyframes on
+ * @param {number} dx - X offset
+ * @param {number} dy - Y offset
+ * @param {number} dz - Z offset (for 3D)
+ * @param {boolean} is3D - Whether property is 3D
+ */
+function shiftKeyframes(prop, dx, dy, dz, is3D) {
+    if (!prop || prop.numKeys === 0) return;
+
+    // STEP 1: Cache all keyframe data first (single pass read)
+    // Include interpolation and easing info to preserve animation curves
+    var keyData = [];
+    for (var k = 1; k <= prop.numKeys; k++) {
+        var keyInfo = {
+            time: prop.keyTime(k),
+            value: prop.keyValue(k),
+            inInterp: prop.keyInInterpolationType(k),
+            outInterp: prop.keyOutInterpolationType(k),
+            easeIn: null,
+            easeOut: null
+        };
+
+        // Capture temporal easing if available (not all property types support this)
+        try {
+            keyInfo.easeIn = prop.keyInTemporalEase(k);
+            keyInfo.easeOut = prop.keyOutTemporalEase(k);
+        } catch (e) {
+            // Some properties don't support temporal easing; that's OK
+        }
+
+        keyData.push(keyInfo);
+    }
+
+    // STEP 2: Remove keys in reverse order (avoids index shifting)
+    for (var k = prop.numKeys; k >= 1; k--) {
+        prop.removeKey(k);
+    }
+
+    // STEP 3: Reapply with shifted values and original easing
+    for (var k = 0; k < keyData.length; k++) {
+        var old = keyData[k].value;
+        var shifted;
+
+        if (is3D) {
+            shifted = [old[0] + dx, old[1] + dy, old[2] + (dz || 0)];
+        } else {
+            shifted = [old[0] + dx, old[1] + dy];
+        }
+
+        // Add key at new time with shifted value
+        prop.setValueAtTime(keyData[k].time, shifted);
+        var newKeyIndex = prop.numKeys;
+
+        // STEP 4: Restore interpolation types
+        try {
+            prop.setInterpolationTypeAtKey(newKeyIndex, keyData[k].inInterp, keyData[k].outInterp);
+        } catch (e) {
+            // Interpolation type restoration failed (rare); continue
+        }
+
+        // STEP 5: Restore temporal easing if it was present
+        if (keyData[k].easeIn && keyData[k].easeOut) {
+            try {
+                prop.setTemporalEaseAtKey(newKeyIndex, keyData[k].easeIn, keyData[k].easeOut);
+            } catch (e) {
+                // Temporal easing not supported for this property; that's OK
+            }
+        }
+    }
+}
+
+
+// ============================================================================
 // ANCHOR PRESET HELPER
 // ============================================================================
 function setAnchorPreset(mode, layerIndices) {
@@ -78,30 +182,15 @@ function setAnchorPreset(mode, layerIndices) {
             var anchorProp = anchorPropRef;
             var posProp = posPropRef;
 
-            var origAnchorKeys = anchorProp.numKeys;
-            if (origAnchorKeys > 0) {
-                for (var a = 1; a <= origAnchorKeys; a++) {
-                    var aVal = anchorProp.keyValue(a);
-                    var aTime = anchorProp.keyTime(a);
-                    var shiftedAnchor = is3D
-                        ? [aVal[0] + deltaX, aVal[1] + deltaY, aVal[2]]
-                        : [aVal[0] + deltaX, aVal[1] + deltaY];
-                    anchorProp.setValueAtTime(aTime, shiftedAnchor);
-                }
+            // Use optimized keyframe helper
+            if (anchorProp.numKeys > 0) {
+                shiftKeyframes(anchorProp, deltaX, deltaY, 0, is3D);
             } else {
                 anchorProp.setValue(newAnchor);
             }
 
-            var origPosKeys = posProp.numKeys;
-            if (origPosKeys > 0) {
-                for (var k = 1; k <= origPosKeys; k++) {
-                    var kVal = posProp.keyValue(k);
-                    var kTime = posProp.keyTime(k);
-                    var shifted = is3D
-                        ? [kVal[0] + deltaX, kVal[1] + deltaY, kVal[2]]
-                        : [kVal[0] + deltaX, kVal[1] + deltaY];
-                    posProp.setValueAtTime(kTime, shifted);
-                }
+            if (posProp.numKeys > 0) {
+                shiftKeyframes(posProp, deltaX, deltaY, 0, is3D);
             } else {
                 posProp.setValue(is3D
                     ? [currentPosition[0] + deltaX, currentPosition[1] + deltaY, currentPosition[2]]
@@ -147,6 +236,14 @@ function decomposeSelectedPrecomps_Advanced() {
     for (var t = 0; t < targets.length; t++) {
         var preLayer = targets[t];
         var nested = preLayer.source;
+
+        // PROGRESS: Update every iteration using reusable helper
+        updateProgress(t + 1, targets.length, "Decomposing precomps");
+
+        // UI REFRESH: Force refresh every 5 iterations to prevent UI freeze
+        if (t % 5 === 0) {
+            app.refresh();
+        }
 
         // ===================================================
         // TIME MAPPING HELPER
@@ -308,7 +405,16 @@ function decomposeSelectedPrecomps_Advanced() {
     }
 
     app.endUndoGroup();
+
+    // Clear/reset progress bar after operation completes
+    updateProgress(targets.length, targets.length, "Decompose complete");
+    if (app && app.setProgressBar) {
+        try {
+            app.setProgressBar(0, 100);
+        } catch (e) {}
+    }
 }
+
 
 
 // ============================================================================
@@ -367,31 +473,17 @@ function centerAnchorPoint_SelectedLayers() {
 
                 var origAnchorKeys = anchorProp.numKeys;
                 if (origAnchorKeys > 0) {
-                    for (var a = 1; a <= origAnchorKeys; a++) {
-                        var aVal  = anchorProp.keyValue(a);
-                        var aTime = anchorProp.keyTime(a);
-                        var shiftedAnchor = is3D
-                            ? [aVal[0] + dx, aVal[1] + dy, aVal[2]]
-                            : [aVal[0] + dx, aVal[1] + dy];
-                        anchorProp.setValueAtTime(aTime, shiftedAnchor);
-                    }
+                    shiftKeyframes(anchorProp, dx, dy, 0, is3D);
                 } else {
                     anchorProp.setValue(newAnchor);
                 }
 
                 var origPosKeys = posProp.numKeys;
                 if (origPosKeys > 0) {
-                    for (var k = 1; k <= origPosKeys; k++) {
-                        var kVal  = posProp.keyValue(k);
-                        var kTime = posProp.keyTime(k);
-                        var shifted = is3D
-                            ? [kVal[0] + dx, kVal[1] + dy, kVal[2] + dz]
-                            : [kVal[0] + dx, kVal[1] + dy];
-                        posProp.setValueAtTime(kTime, shifted);
-                    }
+                    shiftKeyframes(posProp, dx, dy, 0, is3D);
                 } else {
                     var newPosition = is3D
-                        ? [currentPosition[0] + dx, currentPosition[1] + dy, currentPosition[2] + dz]
+                        ? [currentPosition[0] + dx, currentPosition[1] + dy, currentPosition[2]]
                         : [currentPosition[0] + dx, currentPosition[1] + dy];
                     posProp.setValue(newPosition);
                 }
@@ -467,7 +559,7 @@ function cropCompToSelection() {
         alert("Select a composition.");
         return;
     }
-    
+
     var sel = comp.selectedLayers;
     if (sel.length === 0) {
         alert("Select at least one layer to define the crop region.");
@@ -478,40 +570,94 @@ function cropCompToSelection() {
 
     try {
         var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        var validLayersFound = 0;
 
+        // IMPROVED: Handle rotation and edge cases by converting all 4 corners to comp space
         for (var i = 0; i < sel.length; i++) {
             var layer = sel[i];
-            if (typeof layer.sourceRectAtTime !== "function") continue;
 
-            var rect = layer.sourceRectAtTime(comp.time, false);
-            var s = layer.scale.value;
-            var p = layer.position.value;
-            var a = layer.anchorPoint.value;
+            // PROGRESS: Update progress bar every layer
+            updateProgress(i + 1, sel.length, "Calculating bounds");
 
-            var scaleX = s[0] / 100;
-            var scaleY = s[1] / 100;
+            // UI REFRESH: Force refresh every 3 layers to prevent UI freeze during large crops
+            if (i % 3 === 0) {
+                app.refresh();
+            }
 
-            // Manually calculate comp-space bounds
-            var left = p[0] + (rect.left - a[0]) * scaleX;
-            var right = p[0] + (rect.left + rect.width - a[0]) * scaleX;
-            var top = p[1] + (rect.top - a[1]) * scaleY;
-            var bottom = p[1] + (rect.top + rect.height - a[1]) * scaleY;
+            // SAFETY: Skip layers that don't support sourceRectAtTime
+            if (typeof layer.sourceRectAtTime !== "function") {
+                $.writeln("Skipping layer '" + layer.name + "': sourceRectAtTime not supported");
+                continue;
+            }
 
-            // Handle flipped scales
-            var trueLeft = Math.min(left, right);
-            var trueRight = Math.max(left, right);
-            var trueTop = Math.min(top, bottom);
-            var trueBottom = Math.max(top, bottom);
+            // SAFETY: Skip invisible layers (optional but prevents unexpected results)
+            if (!layer.enabled) {
+                $.writeln("Skipping disabled layer '" + layer.name + "'");
+                continue;
+            }
 
-            if (trueLeft < minX) minX = trueLeft;
-            if (trueTop < minY) minY = trueTop;
-            if (trueRight > maxX) maxX = trueRight;
-            if (trueBottom > maxY) maxY = trueBottom;
+            try {
+                var rect = layer.sourceRectAtTime(comp.time, false);
+
+                // Guard against invalid rectangles
+                if (!rect || rect.width <= 0 || rect.height <= 0) {
+                    $.writeln("Skipping layer '" + layer.name + "': invalid source rect");
+                    continue;
+                }
+
+                // Get transform properties
+                var s = layer.scale.value;
+                var a = layer.anchorPoint.value;
+
+                if (!s || !a) continue;
+
+                var scaleX = s[0] / 100;
+                var scaleY = s[1] / 100;
+
+                // Define the 4 corners in layer space (relative to anchor point)
+                var corners = [
+                    [rect.left - a[0], rect.top - a[1]],
+                    [rect.left + rect.width - a[0], rect.top - a[1]],
+                    [rect.left + rect.width - a[0], rect.top + rect.height - a[1]],
+                    [rect.left - a[0], rect.top + rect.height - a[1]]
+                ];
+
+                // Convert each corner to comp space (handles rotation, scale, position, 3D)
+                for (var c = 0; c < corners.length; c++) {
+                    var layerPt = corners[c];
+                    // Scale the point in layer space
+                    var scaledPt = [layerPt[0] * scaleX, layerPt[1] * scaleY, 0];
+
+                    // Use toComp to convert to composition space (handles all transforms including rotation)
+                    var compPt = layer.toComp(scaledPt);
+
+                    // GUARD: Skip invalid coordinate (NaN or Infinity)
+                    if (isNaN(compPt[0]) || isNaN(compPt[1]) || !isFinite(compPt[0]) || !isFinite(compPt[1])) {
+                        continue;
+                    }
+
+                    if (compPt[0] < minX) minX = compPt[0];
+                    if (compPt[0] > maxX) maxX = compPt[0];
+                    if (compPt[1] < minY) minY = compPt[1];
+                    if (compPt[1] > maxY) maxY = compPt[1];
+                }
+
+                validLayersFound++;
+
+            } catch (layerError) {
+                // Log error but continue processing other layers
+                $.writeln("Error processing layer '" + layer.name + "': " + layerError.message);
+                continue;
+            }
         }
 
-        if (minX === Infinity) throw new Error("Could not determine bounds.");
+        // SAFETY: Ensure we found at least one valid layer
+        if (validLayersFound === 0 || minX === Infinity || maxX === -Infinity) {
+            throw new Error("Could not determine crop bounds. Ensure selected layers have visible content.");
+        }
 
-        var buffer = 2; 
+        // Add small buffer for safety and rounding
+        var buffer = 2;
         minX = Math.floor(minX - buffer);
         minY = Math.floor(minY - buffer);
         maxX = Math.ceil(maxX + buffer);
@@ -520,10 +666,12 @@ function cropCompToSelection() {
         var newWidth = maxX - minX;
         var newHeight = maxY - minY;
 
+        // SAFETY: Validate final dimensions
         if (newWidth <= 0 || newHeight <= 0 || newWidth > 30000 || newHeight > 30000) {
-            throw new Error("Invalid crop dimensions calculated.");
+            throw new Error("Invalid crop dimensions (" + newWidth + "x" + newHeight + "). Check layer bounds and try again.");
         }
 
+        // Shift all layers to new origin using temporary null
         var masterNull = comp.layers.addNull();
         masterNull.name = "Temp_Crop_Shift";
         var layersToUnparent = [];
@@ -544,13 +692,24 @@ function cropCompToSelection() {
         }
         masterNull.remove();
 
+        // Apply new dimensions
         comp.width = newWidth;
         comp.height = newHeight;
 
+        $.writeln("Crop complete: " + newWidth + "x" + newHeight + " (from " + validLayersFound + " layer(s))");
+
     } catch (e) {
         alert("Error cropping comp: " + e.message);
+        $.writeln("Crop operation failed: " + e.message);
     } finally {
         app.endUndoGroup();
+
+        // Reset progress bar after crop operation
+        if (app && app.setProgressBar) {
+            try {
+                app.setProgressBar(0, 100);
+            } catch (e) {}
+        }
     }
 }
 
@@ -660,30 +819,36 @@ function AE_Utility_Panel(thisObj) {
         }
 
         // ===== CREATE =====
-        var createSec = addSection("Create");
+        var createSec = addSection("Create Layers");
 
         var createRow = createSec.section.add("group");
         createRow.orientation = "row";
         createRow.alignChildren = "left";
         createRow.margins = 0;
-        createRow.spacing = 2;
+        createRow.spacing = 3;
 
-        btn(createRow,"Null","Create Null",function(){
+        // STYLE: Apply bold header styling for consistency with other sections
+        var createLabel = createSec.section.children[0];
+        try {
+            createLabel.graphics.font = ScriptUI.newFont("Arial", "BOLD", 11);
+        } catch (e) {}
+
+        btn(createRow,"Null","Create a null object for parenting and control", function(){
             perSelection(function(c,l){
                 var n=c.layers.addNull(); n.label=1;
                 if(l){n.startTime=l.startTime;n.inPoint=l.inPoint;n.outPoint=l.outPoint;n.moveBefore(l);}
             },true);
-        });
+        }, 38);
 
-        btn(createRow,"ADJ","Adjustment Layer",function(){
+        btn(createRow,"Adj Layer","Create adjustment layer (white solid) for effects", function(){
             perSelection(function(c,l,i){
                 var a=c.layers.addSolid([1,1,1],"Adj "+(i+1),c.width,c.height,c.pixelAspect);
                 a.adjustmentLayer=true;a.label=11;
                 if(l){a.startTime=l.startTime;a.inPoint=l.inPoint;a.outPoint=l.outPoint;a.moveBefore(l);}
             },true);
-        });
+        }, 50);
 
-        btn(createRow, "Solid", "Create Solid (Eyedropper)", function () {
+        btn(createRow, "Color Solid", "Create colored solid with eyedropper picker", function () {
             var c = getComp();
             if (!c) return;
             var prevLayer = c.selectedLayers.length ? c.selectedLayers[0] : null;
@@ -709,21 +874,27 @@ function AE_Utility_Panel(thisObj) {
                 s.outPoint  = t + dur;
             }
             app.endUndoGroup();
-        });
+        }, 55);
 
-        btn(createRow,"Text","Create Text",function(){
+        btn(createRow,"Text","Create text layer for typography and titles", function(){
             perSelection(function(c,l,i){
                 var t=c.layers.addText("Text "+(i+1)); t.label=9;
                 if(l){t.startTime=l.startTime;t.inPoint=l.inPoint;t.outPoint=l.outPoint;t.moveBefore(l);}
             },true);
-        });
+        }, 38);
 
         addSeparator();
 
         // ===== UTILITIES =====
         var utilSec = addSection("Utilities");
-        
-        btn(utilSec.btnGroup,"1f","1-Frame Adjustment",function(){
+
+        // STYLE: Apply bold header styling for consistency with other sections
+        var utilLabel = utilSec.section.children[0];
+        try {
+            utilLabel.graphics.font = ScriptUI.newFont("Arial", "BOLD", 11);
+        } catch (e) {}
+
+        btn(utilSec.btnGroup, "1F Adj", "Create single-frame adjustment layer at playhead", function(){
             var c=getComp(); if(!c) return;
             var prevLayer=c.selectedLayers.length?c.selectedLayers[0]:null;
             app.beginUndoGroup("AE Panel - 1F Adj");
@@ -737,14 +908,20 @@ function AE_Utility_Panel(thisObj) {
             a.outPoint=t+frameDur;
             if(prevLayer) a.moveBefore(prevLayer);
             app.endUndoGroup();
-        });
+        }, 50);
 
-        btn(utilSec.btnGroup,"AK","Align Keys",function(){
+        btn(utilSec.btnGroup, "Align Keys", "Snap selected keyframes to first key (1-frame spacing)", function(){
             var c=getComp(); if(!c) return;
             var fd=1/c.frameRate;
             app.beginUndoGroup("AE Panel - Align Keys");
             var sel=c.selectedLayers;
             for(var i=0;i<sel.length;i++){
+                // UI REFRESH: Update progress and refresh UI every 3 layers
+                if (i % 3 === 0) {
+                    updateProgress(i + 1, sel.length, "Aligning keyframes");
+                    app.refresh();
+                }
+
                 var props=sel[i].selectedProperties;
                 for(var j=0;j<props.length;j++){
                     var p=props[j];
@@ -762,18 +939,26 @@ function AE_Utility_Panel(thisObj) {
                 }
             }
             app.endUndoGroup();
-        });
+            // Reset progress bar after operation
+            if (app && app.setProgressBar) {
+                try {
+                    app.setProgressBar(0, 100);
+                } catch (e) {}
+            }
+        }, 55);
+
+        addSeparator();
 
         // ===== TRANSFORM (COLLAPSIBLE) =====
         var resetSec = g.add("group");
         resetSec.orientation = "column";
         resetSec.alignChildren = "fill";
         resetSec.margins = 0;
-        resetSec.spacing = 3;
+        resetSec.spacing = 4;
 
-        var resetHeaderBtn = resetSec.add("button", undefined, "Transform ▼");
-        resetHeaderBtn.preferredSize = [undefined, 18];
-        resetHeaderBtn.helpTip = "Toggle Transform Tools";
+        var resetHeaderBtn = resetSec.add("button", undefined, "Transform Reset ▼");
+        resetHeaderBtn.preferredSize = [undefined, 20];
+        resetHeaderBtn.helpTip = "Reset individual transform properties or all at once";
 
         var resetContent = resetSec.add("group");
         resetContent.orientation = "column";
@@ -789,7 +974,7 @@ function AE_Utility_Panel(thisObj) {
             isResetExpanded = !isResetExpanded;
             resetContent.visible = isResetExpanded;
             resetContent.maximumSize = isResetExpanded ? [9999, 9999] : [9999, 0];
-            resetHeaderBtn.text = isResetExpanded ? "Transform ▲" : "Transform ▼";
+            resetHeaderBtn.text = isResetExpanded ? "Transform Reset ▲" : "Transform Reset ▼";
             win.layout.layout(true);
         };
 
@@ -797,9 +982,9 @@ function AE_Utility_Panel(thisObj) {
         resetRow.orientation = "row";
         resetRow.alignChildren = "left";
         resetRow.margins = 0;
-        resetRow.spacing = 2;
+        resetRow.spacing = 3;
 
-        btn(resetRow, "Pos", "Reset Position to center of comp", function(){
+        btn(resetRow, "Position", "Reset position to center of composition", function(){
             var c = getComp(); if(!c) return;
             var sel = c.selectedLayers; if(sel.length === 0) return;
             app.beginUndoGroup("AE Panel - Reset Position");
@@ -809,9 +994,9 @@ function AE_Utility_Panel(thisObj) {
                 hardReset(l.position, defaultPos);
             }
             app.endUndoGroup();
-        }, 26);
+        }, 50);
 
-        btn(resetRow, "Scl", "Reset Scale to 100%", function(){
+        btn(resetRow, "Scale", "Reset scale to 100% (unscaled)", function(){
             var c = getComp(); if(!c) return;
             var sel = c.selectedLayers; if(sel.length === 0) return;
             app.beginUndoGroup("AE Panel - Reset Scale");
@@ -821,9 +1006,9 @@ function AE_Utility_Panel(thisObj) {
                 hardReset(l.scale, defaultScale);
             }
             app.endUndoGroup();
-        }, 26);
+        }, 45);
 
-        btn(resetRow, "Rot", "Reset Rotation to 0", function(){
+        btn(resetRow, "Rotation", "Reset rotation to 0 degrees (unrotated)", function(){
             var c = getComp(); if(!c) return;
             var sel = c.selectedLayers; if(sel.length === 0) return;
             app.beginUndoGroup("AE Panel - Reset Rotation");
@@ -839,9 +1024,9 @@ function AE_Utility_Panel(thisObj) {
                 }
             }
             app.endUndoGroup();
-        }, 26);
+        }, 50);
 
-        btn(resetRow, "Opa", "Reset Opacity to 100%", function(){
+        btn(resetRow, "Opacity", "Reset opacity to 100% (fully opaque)", function(){
             var c = getComp(); if(!c) return;
             var sel = c.selectedLayers; if(sel.length === 0) return;
             app.beginUndoGroup("AE Panel - Reset Opacity");
@@ -849,17 +1034,24 @@ function AE_Utility_Panel(thisObj) {
                 hardReset(sel[i].opacity, 100);
             }
             app.endUndoGroup();
-        }, 26);
+        }, 50);
 
-        btn(resetRow, "All", "Reset ALL transforms (Position, Scale, Rotation, Opacity)", function(){
+        btn(resetRow, "Reset All", "Reset all: position, scale, rotation, and opacity", function(){
             resetLayerTransforms();
-        }, 26);
+        }, 55);
 
         addSeparator();
 
         // ===== CAMERA =====
         var camSec = addSection("Camera");
-        btn(camSec.btnGroup,"Cam","Camera + Rig",function(){
+
+        // STYLE: Apply bold header styling for consistency with other sections
+        var camLabel = camSec.section.children[0];
+        try {
+            camLabel.graphics.font = ScriptUI.newFont("Arial", "BOLD", 11);
+        } catch (e) {}
+
+        btn(camSec.btnGroup,"Camera Rig","Create camera with null controller (auto-frame selected layers)", function(){
             var c=getComp(); if(!c) return;
             app.beginUndoGroup("AE Panel - Camera Rig");
             var cam=c.layers.addCamera("Camera",[c.width/2,c.height/2]);
@@ -880,7 +1072,7 @@ function AE_Utility_Panel(thisObj) {
 
             ctl.moveBefore(cam);cam.parent=ctl;
             app.endUndoGroup();
-        });
+        }, 70);
 
         addSeparator();
 
@@ -889,12 +1081,12 @@ function AE_Utility_Panel(thisObj) {
         anchorSec.orientation = "column";
         anchorSec.alignChildren = "fill";
         anchorSec.margins = 0;
-        anchorSec.spacing = 3;
+        anchorSec.spacing = 4;
 
         // Collapsible header button
-        var anchorHeaderBtn = anchorSec.add("button", undefined, "Anchor ▼");
-        anchorHeaderBtn.preferredSize = [undefined, 18];
-        anchorHeaderBtn.helpTip = "Toggle Anchor Presets";
+        var anchorHeaderBtn = anchorSec.add("button", undefined, "Anchor Point Presets ▼");
+        anchorHeaderBtn.preferredSize = [undefined, 20];
+        anchorHeaderBtn.helpTip = "Set anchor point to preset positions (TL=top-left, C=center, BR=bottom-right, etc.)";
 
         // Content group (hidden by default)
         var anchorContent = anchorSec.add("group");
@@ -911,7 +1103,7 @@ function AE_Utility_Panel(thisObj) {
             isExpanded = !isExpanded;
             anchorContent.visible = isExpanded;
             anchorContent.maximumSize = isExpanded ? [9999, 9999] : [9999, 0];
-            anchorHeaderBtn.text = isExpanded ? "Anchor ▲" : "Anchor ▼";
+            anchorHeaderBtn.text = isExpanded ? "Anchor Point Presets ▲" : "Anchor Point Presets ▼";
             win.layout.layout(true);
         };
 
@@ -965,11 +1157,11 @@ function AE_Utility_Panel(thisObj) {
         toolsSec.orientation = "column";
         toolsSec.alignChildren = "fill";
         toolsSec.margins = 0;
-        toolsSec.spacing = 3;
+        toolsSec.spacing = 4;
 
-        var toolsHeaderBtn = toolsSec.add("button", undefined, "Tools ▼");
-        toolsHeaderBtn.preferredSize = [undefined, 18];
-        toolsHeaderBtn.helpTip = "Toggle Advanced Tools";
+        var toolsHeaderBtn = toolsSec.add("button", undefined, "Advanced Tools ▼");
+        toolsHeaderBtn.preferredSize = [undefined, 20];
+        toolsHeaderBtn.helpTip = "Decompose, crop, sequence layers, and plugin launcher";
 
         var toolsContent = toolsSec.add("group");
         toolsContent.orientation = "column"; // Changed to column to hold multiple rows
@@ -985,7 +1177,7 @@ function AE_Utility_Panel(thisObj) {
             isToolsExpanded = !isToolsExpanded;
             toolsContent.visible = isToolsExpanded;
             toolsContent.maximumSize = isToolsExpanded ? [9999, 9999] : [9999, 0];
-            toolsHeaderBtn.text = isToolsExpanded ? "Tools ▲" : "Tools ▼";
+            toolsHeaderBtn.text = isToolsExpanded ? "Advanced Tools ▲" : "Advanced Tools ▼";
             win.layout.layout(true);
         };
 
@@ -994,16 +1186,22 @@ function AE_Utility_Panel(thisObj) {
         toolsLayerSec.orientation = "column";
         toolsLayerSec.alignChildren = "left";
         toolsLayerSec.margins = 0;
-        toolsLayerSec.spacing = 1;
+        toolsLayerSec.spacing = 2;
 
-        toolsLayerSec.add("statictext", undefined, "Layer");
+        var layerOpsLabel = toolsLayerSec.add("statictext", undefined, "Layer Operations");
+        // SAFE: Use try-catch for font styling; fallback to default if unavailable
+        try {
+            layerOpsLabel.graphics.font = ScriptUI.newFont("Arial", "BOLD", 11);
+        } catch (e) {
+            // Fallback to system default font
+        }
 
         var tLayerRow = toolsLayerSec.add("group");
         tLayerRow.orientation = "row";
-        tLayerRow.spacing = 2;
-        btn(tLayerRow, "De", "Decompose Precomp", decomposeSelectedPrecomps_Advanced);
+        tLayerRow.spacing = 3;
+        btn(tLayerRow, "Decomp", "Decompose precomp into parent composition (preserves keyframes & effects)", decomposeSelectedPrecomps_Advanced, 48);
 
-        btn(tLayerRow, "eCon", "Precompose layers separately", function(){
+        btn(tLayerRow, "Precomp", "Precompose selected layers separately with individual names", function(){
             var comp = app.project.activeItem;
             if (!(comp instanceof CompItem)) {
                 alert("Select a composition.");
@@ -1043,35 +1241,47 @@ function AE_Utility_Panel(thisObj) {
             }
 
             app.endUndoGroup();
-        });
+        }, 48);
 
         // --- ROW 2: Comp Tools ---
         var toolsCompSec = toolsContent.add("group");
         toolsCompSec.orientation = "column";
         toolsCompSec.alignChildren = "left";
         toolsCompSec.margins = 0;
-        toolsCompSec.spacing = 1;
+        toolsCompSec.spacing = 2;
 
-        toolsCompSec.add("statictext", undefined, "Comp");
+        var compToolsLabel = toolsCompSec.add("statictext", undefined, "Composition Tools");
+        // SAFE: Use try-catch for font styling; fallback to default if unavailable
+        try {
+            compToolsLabel.graphics.font = ScriptUI.newFont("Arial", "BOLD", 11);
+        } catch (e) {
+            // Fallback to system default font
+        }
 
         var tRow1 = toolsCompSec.add("group");
         tRow1.orientation = "row";
-        tRow1.spacing = 2;
-        btn(tRow1, "Crop", "Crop Comp to Bounding Box", cropCompToSelection, 35);
-        btn(tRow1, "Seq", "Sequence Layers End-to-End", sequenceSelectedLayers, 30);
+        tRow1.spacing = 3;
+        btn(tRow1, "Crop Comp", "Crop composition to layer bounds (supports rotation & scale)", cropCompToSelection, 60);
+        btn(tRow1, "Sequence", "Arrange selected layers end-to-end (no gaps)", sequenceSelectedLayers, 55);
 
         // --- ROW 3: Plugin Launcher ---
         var toolsLaunchSec = toolsContent.add("group");
         toolsLaunchSec.orientation = "column";
         toolsLaunchSec.alignChildren = "left";
         toolsLaunchSec.margins = 0;
-        toolsLaunchSec.spacing = 1;
+        toolsLaunchSec.spacing = 2;
 
-        toolsLaunchSec.add("statictext", undefined, "Launch");
+        var launchLabel = toolsLaunchSec.add("statictext", undefined, "Plugin & Script Launcher");
+        // SAFE: Use try-catch for font styling; fallback to default if unavailable
+        try {
+            launchLabel.graphics.font = ScriptUI.newFont("Arial", "BOLD", 11);
+        } catch (e) {
+            // Fallback to system default font
+        }
 
         var tRow2 = toolsLaunchSec.add("group");
         tRow2.orientation = "row";
-        tRow2.spacing = 2;
+        tRow2.spacing = 3;
 
         // Load saved tools from AE preferences
         var myFavs = [];
@@ -1081,19 +1291,50 @@ function AE_Utility_Panel(thisObj) {
             myFavs = ["Menu:Align", "Menu:Character"]; // Defaults
         }
 
-        var ddLauncher = tRow2.add("dropdownlist", undefined, myFavs);
+        var ddLauncher = tRow2.add("dropdownlist", undefined, []);
+
+        // Helper: Extract clean display name from stored value
+        function getDisplayName(storedValue) {
+            if (storedValue.indexOf("Menu:") === 0) {
+                // For Menu: just return the plugin name
+                return storedValue.substring(5);
+            } else if (storedValue.indexOf("File:") === 0) {
+                // For File: extract just the filename (no path)
+                var filePath = storedValue.substring(5);
+                var name = filePath.split("\\").pop(); // Get last part after backslash
+                if (!name) name = filePath.split("/").pop(); // Fallback for forward slash
+                return name || filePath;
+            }
+            return storedValue;
+        }
+
+        // Populate dropdown with clean display names, store full data
+        for (var idx = 0; idx < myFavs.length; idx++) {
+            var stored = myFavs[idx];
+            if (!stored) continue;
+
+            var displayName = getDisplayName(stored);
+            var item = ddLauncher.add("item", displayName);
+            // Store the full command/path in the item's data property
+            item.data = stored;
+        }
+
         if (ddLauncher.items.length > 0) ddLauncher.selection = 0;
         ddLauncher.preferredSize.width = 80;
 
         function saveLauncherSettings() {
             var arr = [];
-            for(var i=0; i<ddLauncher.items.length; i++) arr.push(ddLauncher.items[i].text);
+            // Save only the .data values (full command/path), not display text
+            for(var i=0; i<ddLauncher.items.length; i++) {
+                arr.push(ddLauncher.items[i].data);
+            }
             app.settings.saveSetting("MyAEPanel", "FavTools", arr.join("||"));
         }
 
-        btn(tRow2, "▶", "Run Selected Tool", function(){
+        btn(tRow2, "▶", "Execute the selected tool/plugin from dropdown", function(){
             if (!ddLauncher.selection) return;
-            var sel = ddLauncher.selection.text;
+            // CRITICAL: Use .data (stored command) instead of .text (display name)
+            var sel = ddLauncher.selection.data;
             app.beginUndoGroup("AE Panel - Launch");
 
             if (sel.indexOf("Menu:") === 0) {
@@ -1126,9 +1367,9 @@ function AE_Utility_Panel(thisObj) {
             }
 
             app.endUndoGroup();
-        }, 20);
+        }, 24);
 
-        btn(tRow2, "+", "Add Script or Plugin", function(){
+        btn(tRow2, "+", "Add menu plugin or script file to launcher", function(){
             var type = confirm("Click YES to add a Menu Plugin (e.g. 'Align', 'Duik').\nClick NO to browse for a Script File (.jsx).");
             if (type) {
                 var cmd = prompt(
@@ -1137,27 +1378,36 @@ function AE_Utility_Panel(thisObj) {
                     "Flow"
                 );
                 if (cmd) {
-                    ddLauncher.add("item", "Menu:" + cmd);
+                    var storedValue = "Menu:" + cmd;
+                    // Add item with clean display name but store full data
+                    var item = ddLauncher.add("item", cmd);
+                    item.data = storedValue;
                     ddLauncher.selection = ddLauncher.items.length - 1;
                     saveLauncherSettings();
                 }
             } else {
                 var f = File.openDialog("Select a Script", "*.jsx;*.jsxbin");
                 if (f) {
-                    ddLauncher.add("item", "File:" + f.fsName);
+                    var storedValue = "File:" + f.fsName;
+                    // Extract clean filename for display
+                    var displayFileName = f.fsName.split("\\").pop();
+                    if (!displayFileName) displayFileName = f.fsName.split("/").pop();
+                    // Add item with clean filename but store full path
+                    var item = ddLauncher.add("item", displayFileName);
+                    item.data = storedValue;
                     ddLauncher.selection = ddLauncher.items.length - 1;
                     saveLauncherSettings();
                 }
             }
-        }, 20);
+        }, 24);
 
-        btn(tRow2, "-", "Remove Selected", function(){
+        btn(tRow2, "-", "Remove the selected tool from launcher", function(){
             if (ddLauncher.selection && ddLauncher.items.length > 0) {
                 ddLauncher.remove(ddLauncher.selection);
                 if(ddLauncher.items.length > 0) ddLauncher.selection = 0;
                 saveLauncherSettings();
             }
-        }, 20);
+        }, 24);
 
         win.layout.layout(true);
         return win;
