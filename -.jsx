@@ -1,3 +1,47 @@
+(function(thisObj) {
+
+// ============================================================================
+// API ABSTRACTION WRAPPER
+// ============================================================================
+var AE = {
+    getActiveComp: function() {
+        var c = app.project.activeItem;
+        return (c instanceof CompItem) ? c : null;
+    },
+    requireComp: function() {
+        var c = app.project.activeItem;
+        if (!(c instanceof CompItem)) {
+            alert("Select a composition.");
+            return null;
+        }
+        return c;
+    },
+    requireSelection: function(comp) {
+        if (!comp) return null;
+        var sel = comp.selectedLayers;
+        if (!sel.length) {
+            alert("Select at least one layer.");
+            return null;
+        }
+        return sel;
+    }
+};
+
+// ============================================================================
+// TRANSFORM DEFAULTS HELPER
+// ============================================================================
+var TransformDefaults = {
+    position: function(layer, comp) {
+        return layer.threeDLayer ? [comp.width/2, comp.height/2, 0] : [comp.width/2, comp.height/2];
+    },
+    scale: function(layer) {
+        return layer.threeDLayer ? [100,100,100] : [100,100];
+    },
+    rotation: function(layer) {
+        return layer.threeDLayer ? [0,0,0] : 0;
+    }
+};
+
 // ============================================================================
 // PROGRESS FEEDBACK HELPER
 // ============================================================================
@@ -121,10 +165,8 @@ function setAnchorPreset(mode, layerIndices) {
         }
     }
 
-    var comp = app.project.activeItem;
-    if (!comp || !(comp instanceof CompItem)) {
-        return false;
-    }
+    var comp = AE.requireComp();
+    if (!comp) return false;
 
     // Rebuild layer array from indices (stable reference)
     var layersToProcess = [];
@@ -212,11 +254,8 @@ function setAnchorPreset(mode, layerIndices) {
 // ADVANCED DECOMPOSE
 // ============================================================================
 function decomposeSelectedPrecomps_Advanced() {
-    var comp = app.project.activeItem;
-    if (!(comp instanceof CompItem)) {
-        alert("Select a composition.");
-        return;
-    }
+    var comp = AE.requireComp();
+    if (!comp) return;
 
     var sel = comp.selectedLayers;
     if (!sel.length) {
@@ -337,6 +376,65 @@ function decomposeSelectedPrecomps_Advanced() {
             try { newLayer.stretch = srcLayer.stretch; } catch (e) {}
 
             // ===================================================
+            // COPY EFFECTS
+            // ===================================================
+            try {
+                var srcEffects = srcLayer.property("ADBE Effect Parade");
+                var dstEffects = newLayer.property("ADBE Effect Parade");
+                if (srcEffects && dstEffects && srcEffects.numProperties > 0) {
+                    for (var ef = 1; ef <= srcEffects.numProperties; ef++) {
+                        try {
+                            srcEffects.property(ef).copyToComp(comp);
+                            var copiedEffect = comp.layer(1).property("ADBE Effect Parade").property(
+                                comp.layer(1).property("ADBE Effect Parade").numProperties
+                            );
+                            if (copiedEffect) {
+                                copiedEffect.moveTo(dstEffects.numProperties + 1);
+                            }
+                        } catch (efErr) {
+                            $.writeln("Could not copy effect " + ef + " on layer '" + srcLayer.name + "': " + efErr.message);
+                        }
+                    }
+                }
+            } catch (e) {
+                $.writeln("Effect copy failed for layer '" + srcLayer.name + "': " + e.message);
+            }
+
+            // ===================================================
+            // COPY LAYER STYLES
+            // ===================================================
+            try {
+                var srcStyles = srcLayer.property("ADBE Layer Styles");
+                var dstStyles = newLayer.property("ADBE Layer Styles");
+                if (srcStyles && dstStyles && srcStyles.numProperties > 0) {
+                    for (var st = 1; st <= srcStyles.numProperties; st++) {
+                        try {
+                            var srcStyle = srcStyles.property(st);
+                            var dstStyle = dstStyles.property(st);
+                            if (srcStyle && dstStyle && srcStyle.enabled) {
+                                dstStyle.enabled = true;
+                                for (var sp = 1; sp <= srcStyle.numProperties; sp++) {
+                                    try {
+                                        var srcStyleProp = srcStyle.property(sp);
+                                        var dstStyleProp = dstStyle.property(sp);
+                                        if (srcStyleProp && dstStyleProp &&
+                                            srcStyleProp.propertyValueType !==
+                                            PropertyValueType.NO_VALUE) {
+                                            dstStyleProp.setValue(srcStyleProp.value);
+                                        }
+                                    } catch (spErr) {}
+                                }
+                            }
+                        } catch (stErr) {
+                            $.writeln("Could not copy style " + st + " on layer '" + srcLayer.name + "': " + stErr.message);
+                        }
+                    }
+                }
+            } catch (e) {
+                $.writeln("Layer style copy failed for layer '" + srcLayer.name + "': " + e.message);
+            }
+
+            // ===================================================
             // PRESERVE TRACK MATTE RELATIONSHIPS
             // ===================================================
             try {
@@ -421,17 +519,11 @@ function decomposeSelectedPrecomps_Advanced() {
 // CENTER ANCHOR POINT
 // ============================================================================
 function centerAnchorPoint_SelectedLayers() {
-    var comp = app.project.activeItem;
-    if (!comp || !(comp instanceof CompItem)) {
-        alert("Please select an active composition");
-        return;
-    }
+    var comp = AE.requireComp();
+    if (!comp) return;
 
-    var selectedLayers = comp.selectedLayers;
-    if (selectedLayers.length === 0) {
-        alert("Please select at least one layer");
-        return;
-    }
+    var selectedLayers = AE.requireSelection(comp);
+    if (!selectedLayers) return;
 
     app.beginUndoGroup("AE Panel - Center Anchor");
 
@@ -521,8 +613,8 @@ function hardReset(prop, val) {
 }
 
 function resetLayerTransforms() {
-    var comp = app.project.activeItem;
-    if (!comp || !(comp instanceof CompItem)) return;
+    var comp = AE.requireComp();
+    if (!comp) return;
 
     var sel = comp.selectedLayers;
     if (sel.length === 0) return;
@@ -532,19 +624,16 @@ function resetLayerTransforms() {
     for (var i = 0; i < sel.length; i++) {
         var l = sel[i];
 
-        var defaultPos = l.threeDLayer ? [comp.width/2, comp.height/2, 0] : [comp.width/2, comp.height/2];
-        hardReset(l.position, defaultPos);
-
-        var defaultScale = l.threeDLayer ? [100, 100, 100] : [100, 100];
-        hardReset(l.scale, defaultScale);
+        hardReset(l.position, TransformDefaults.position(l, comp));
+        hardReset(l.scale, TransformDefaults.scale(l));
 
         if (l.threeDLayer) {
-            hardReset(l.orientation, [0, 0, 0]);
+            hardReset(l.orientation, TransformDefaults.rotation(l));
             hardReset(l.rotationX, 0);
             hardReset(l.rotationY, 0);
             hardReset(l.rotationZ, 0);
         } else {
-            hardReset(l.rotation, 0);
+            hardReset(l.rotation, TransformDefaults.rotation(l));
         }
 
         hardReset(l.opacity, 100);
@@ -554,17 +643,11 @@ function resetLayerTransforms() {
 
 
 function cropCompToSelection() {
-    var comp = app.project.activeItem;
-    if (!comp || !(comp instanceof CompItem)) {
-        alert("Select a composition.");
-        return;
-    }
+    var comp = AE.requireComp();
+    if (!comp) return;
 
-    var sel = comp.selectedLayers;
-    if (sel.length === 0) {
-        alert("Select at least one layer to define the crop region.");
-        return;
-    }
+    var sel = AE.requireSelection(comp);
+    if (!sel) return;
 
     app.beginUndoGroup("AE Panel - Crop Comp");
 
@@ -606,13 +689,9 @@ function cropCompToSelection() {
                 }
 
                 // Get transform properties
-                var s = layer.scale.value;
                 var a = layer.anchorPoint.value;
 
-                if (!s || !a) continue;
-
-                var scaleX = s[0] / 100;
-                var scaleY = s[1] / 100;
+                if (!a) continue;
 
                 // Define the 4 corners in layer space (relative to anchor point)
                 var corners = [
@@ -625,11 +704,8 @@ function cropCompToSelection() {
                 // Convert each corner to comp space (handles rotation, scale, position, 3D)
                 for (var c = 0; c < corners.length; c++) {
                     var layerPt = corners[c];
-                    // Scale the point in layer space
-                    var scaledPt = [layerPt[0] * scaleX, layerPt[1] * scaleY, 0];
-
                     // Use toComp to convert to composition space (handles all transforms including rotation)
-                    var compPt = layer.toComp(scaledPt);
+                    var compPt = layer.toComp([layerPt[0], layerPt[1], 0]);
 
                     // GUARD: Skip invalid coordinate (NaN or Infinity)
                     if (isNaN(compPt[0]) || isNaN(compPt[1]) || !isFinite(compPt[0]) || !isFinite(compPt[1])) {
@@ -714,24 +790,29 @@ function cropCompToSelection() {
 }
 
 function sequenceSelectedLayers() {
-    var comp = app.project.activeItem;
-    if (!comp || !(comp instanceof CompItem)) return;
-    
+    var comp = AE.requireComp();
+    if (!comp) return;
+
     var sel = comp.selectedLayers;
     if (sel.length < 2) return;
-    
+
+    // Sort layers by index to ensure proper sequencing order
+    var selArray = [];
+    for (var i = 0; i < sel.length; i++) selArray.push(sel[i]);
+    selArray.sort(function(a, b) { return a.index - b.index; });
+
     app.beginUndoGroup("AE Panel - Sequence Layers");
-    
+
     // Set the time tracker to the end of the very first layer
-    var nextTime = sel[0].outPoint;
-    
-    for (var i = 1; i < sel.length; i++) {
-        var l = sel[i];
+    var nextTime = selArray[0].outPoint;
+
+    for (var i = 1; i < selArray.length; i++) {
+        var l = selArray[i];
         var inOffset = l.inPoint - l.startTime; // Account for trimmed layers
         l.startTime = nextTime - inOffset;
         nextTime = l.outPoint;
     }
-    
+
     app.endUndoGroup();
 }
 
@@ -759,12 +840,7 @@ function AE_Utility_Panel(thisObj) {
 
         // ---------- helpers ----------
         function getComp() {
-            var c = app.project.activeItem;
-            if (!(c instanceof CompItem)) {
-                alert("Select a composition.");
-                return null;
-            }
-            return c;
+            return AE.requireComp();
         }
 
         function perSelection(fn, allowEmpty) {
@@ -848,33 +924,31 @@ function AE_Utility_Panel(thisObj) {
             },true);
         }, 50);
 
-        btn(createRow, "Color Solid", "Create colored solid with eyedropper picker", function () {
-            var c = getComp();
+        btn(createRow, "Solid", "Create a new solid layer", function() {
+            var c = AE.requireComp();
             if (!c) return;
-            var prevLayer = c.selectedLayers.length ? c.selectedLayers[0] : null;
-            var color = $.colorPicker();
-            if (color < 0) return;
             app.beginUndoGroup("AE Panel - Solid");
-            var r = ((color >> 16) & 0xFF) / 255;
-            var gb = ((color >> 8) & 0xFF) / 255;
-            var b = (color & 0xFF) / 255;
-            var s = c.layers.addSolid([r, gb, b], "Solid", c.width, c.height, c.pixelAspect);
+            var s = c.layers.addSolid(
+                [0.5, 0.5, 0.5],
+                "Solid",
+                c.width,
+                c.height,
+                c.pixelAspect
+            );
             s.label = 8;
+            var prevLayer = c.selectedLayers.length ? c.selectedLayers[0] : null;
             if (prevLayer) {
                 s.startTime = prevLayer.startTime;
                 s.inPoint   = prevLayer.inPoint;
                 s.outPoint  = prevLayer.outPoint;
                 s.moveBefore(prevLayer);
             } else {
-                var t   = c.workAreaStart;
-                var dur = c.workAreaDuration;
-                if (dur === 0) dur = 1;
-                s.startTime = t;
-                s.inPoint   = t;
-                s.outPoint  = t + dur;
+                s.startTime = c.workAreaStart;
+                s.inPoint   = c.workAreaStart;
+                s.outPoint  = c.workAreaStart + Math.max(c.workAreaDuration, c.frameDuration);
             }
             app.endUndoGroup();
-        }, 55);
+        }, 38);
 
         btn(createRow,"Text","Create text layer for typography and titles", function(){
             perSelection(function(c,l,i){
@@ -985,49 +1059,47 @@ function AE_Utility_Panel(thisObj) {
         resetRow.spacing = 3;
 
         btn(resetRow, "Position", "Reset position to center of composition", function(){
-            var c = getComp(); if(!c) return;
+            var c = AE.requireComp(); if(!c) return;
             var sel = c.selectedLayers; if(sel.length === 0) return;
             app.beginUndoGroup("AE Panel - Reset Position");
             for (var i = 0; i < sel.length; i++) {
                 var l = sel[i];
-                var defaultPos = l.threeDLayer ? [c.width/2, c.height/2, 0] : [c.width/2, c.height/2];
-                hardReset(l.position, defaultPos);
+                hardReset(l.position, TransformDefaults.position(l, c));
             }
             app.endUndoGroup();
         }, 50);
 
         btn(resetRow, "Scale", "Reset scale to 100% (unscaled)", function(){
-            var c = getComp(); if(!c) return;
+            var c = AE.requireComp(); if(!c) return;
             var sel = c.selectedLayers; if(sel.length === 0) return;
             app.beginUndoGroup("AE Panel - Reset Scale");
             for (var i = 0; i < sel.length; i++) {
                 var l = sel[i];
-                var defaultScale = l.threeDLayer ? [100, 100, 100] : [100, 100];
-                hardReset(l.scale, defaultScale);
+                hardReset(l.scale, TransformDefaults.scale(l));
             }
             app.endUndoGroup();
         }, 45);
 
         btn(resetRow, "Rotation", "Reset rotation to 0 degrees (unrotated)", function(){
-            var c = getComp(); if(!c) return;
+            var c = AE.requireComp(); if(!c) return;
             var sel = c.selectedLayers; if(sel.length === 0) return;
             app.beginUndoGroup("AE Panel - Reset Rotation");
             for (var i = 0; i < sel.length; i++) {
                 var l = sel[i];
                 if (l.threeDLayer) {
-                    hardReset(l.orientation, [0, 0, 0]);
+                    hardReset(l.orientation, TransformDefaults.rotation(l));
                     hardReset(l.rotationX, 0);
                     hardReset(l.rotationY, 0);
                     hardReset(l.rotationZ, 0);
                 } else {
-                    hardReset(l.rotation, 0);
+                    hardReset(l.rotation, TransformDefaults.rotation(l));
                 }
             }
             app.endUndoGroup();
         }, 50);
 
         btn(resetRow, "Opacity", "Reset opacity to 100% (fully opaque)", function(){
-            var c = getComp(); if(!c) return;
+            var c = AE.requireComp(); if(!c) return;
             var sel = c.selectedLayers; if(sel.length === 0) return;
             app.beginUndoGroup("AE Panel - Reset Opacity");
             for (var i = 0; i < sel.length; i++) {
@@ -1126,16 +1198,10 @@ function AE_Utility_Panel(thisObj) {
 
                 (function (presetMode) {
                     b.onClick = function () {
-                        var comp = app.project.activeItem;
-                        if (!comp || !(comp instanceof CompItem)) {
-                            alert("Select a composition");
-                            return;
-                        }
-                        var selectedLayers = comp.selectedLayers;
-                        if (selectedLayers.length === 0) {
-                            alert("Select at least one layer");
-                            return;
-                        }
+                        var comp = AE.requireComp();
+                        if (!comp) return;
+                        var selectedLayers = AE.requireSelection(comp);
+                        if (!selectedLayers) return;
 
                         var savedLayerIndices = [];
                         for (var s = 0; s < selectedLayers.length; s++) {
@@ -1202,17 +1268,11 @@ function AE_Utility_Panel(thisObj) {
         btn(tLayerRow, "Decomp", "Decompose precomp into parent composition (preserves keyframes & effects)", decomposeSelectedPrecomps_Advanced, 48);
 
         btn(tLayerRow, "Precomp", "Precompose selected layers separately with individual names", function(){
-            var comp = app.project.activeItem;
-            if (!(comp instanceof CompItem)) {
-                alert("Select a composition.");
-                return;
-            }
+            var comp = AE.requireComp();
+            if (!comp) return;
 
-            var selectedLayers = comp.selectedLayers;
-            if (!selectedLayers.length) {
-                alert("Select at least one layer.");
-                return;
-            }
+            var selectedLayers = AE.requireSelection(comp);
+            if (!selectedLayers) return;
 
             app.beginUndoGroup("AE Panel - Precompose");
 
@@ -1331,6 +1391,9 @@ function AE_Utility_Panel(thisObj) {
             app.settings.saveSetting("MyAEPanel", "FavTools", arr.join("||"));
         }
 
+        // Cache for menu command IDs to avoid rescanning every click
+        var menuCommandCache = {};
+
         btn(tRow2, "▶", "Execute the selected tool/plugin from dropdown", function(){
             if (!ddLauncher.selection) return;
             // CRITICAL: Use .data (stored command) instead of .text (display name)
@@ -1346,15 +1409,23 @@ function AE_Utility_Panel(thisObj) {
                 } else {
                     // Strategy 2: scan IDs to find plugin/panel commands exposed via Window menu
                     var found = false;
-                    for (var scanId = 1; scanId <= 10000; scanId++) {
-                        try {
-                            var name = app.menuCommandName(scanId);
-                            if (name && name.toLowerCase().indexOf(cmd.toLowerCase()) !== -1) {
-                                app.executeCommand(scanId);
-                                found = true;
-                                break;
-                            }
-                        } catch(e) {}
+                    // Check cache first before scanning
+                    if (menuCommandCache[cmd] !== undefined) {
+                        app.executeCommand(menuCommandCache[cmd]);
+                        found = true;
+                    } else {
+                        // Scan with reduced ceiling (5000 covers all known AE commands)
+                        for (var scanId = 1; scanId <= 5000; scanId++) {
+                            try {
+                                var cmdName = app.menuCommandName(scanId);
+                                if (cmdName && cmdName.toLowerCase().indexOf(cmd.toLowerCase()) !== -1) {
+                                    menuCommandCache[cmd] = scanId;
+                                    app.executeCommand(scanId);
+                                    found = true;
+                                    break;
+                                }
+                            } catch(e) {}
+                        }
                     }
                     if (!found) {
                         alert("Could not find plugin or menu command: " + cmd + "\nMake sure the plugin is installed and AE is restarted.");
@@ -1417,4 +1488,5 @@ function AE_Utility_Panel(thisObj) {
     if (p instanceof Window) { p.center(); p.show(); }
 }
 
-AE_Utility_Panel(this);
+    AE_Utility_Panel(thisObj);
+}(this));
