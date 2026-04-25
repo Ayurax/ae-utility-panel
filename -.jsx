@@ -1024,43 +1024,6 @@ function AE_Utility_Panel(thisObj) {
             app.endUndoGroup();
         }, 50);
 
-        btn(utilSec.btnGroup, "Align Keys", "Snap selected keyframes to first key (1-frame spacing)", function(){
-            var c=getComp(); if(!c) return;
-            var fd=1/c.frameRate;
-            app.beginUndoGroup("AE Panel - Align Keys");
-            var sel=c.selectedLayers;
-            for(var i=0;i<sel.length;i++){
-                // UI REFRESH: Update progress and refresh UI every 3 layers
-                if (i % 3 === 0) {
-                    updateProgress(i + 1, sel.length, "Aligning keyframes");
-                    app.refresh();
-                }
-
-                var props=sel[i].selectedProperties;
-                for(var j=0;j<props.length;j++){
-                    var p=props[j];
-                    if(!p||p.numKeys<2)continue;
-                    var isTR=(p.matchName==="ADBE TimeRemapping");
-                    var last=p.numKeys,keys=[];
-                    for(var k=1;k<=p.numKeys;k++)
-                        if(p.keySelected(k)&&!(isTR&&k===last))keys.push(k);
-                    if(keys.length>1){
-                        var t0=p.keyTime(keys[0]),vals=[];
-                        for(var m=0;m<keys.length;m++)vals.push(p.keyValue(keys[m]));
-                        for(var m=keys.length-1;m>=0;m--)p.removeKey(keys[m]);
-                        for(var m=0;m<vals.length;m++)p.setValueAtTime(t0+m*fd,vals[m]);
-                    }
-                }
-            }
-            app.endUndoGroup();
-            // Reset progress bar after operation
-            if (app && app.setProgressBar) {
-                try {
-                    app.setProgressBar(0, 100);
-                } catch (e) {}
-            }
-        }, 55);
-
         btn(utilSec.btnGroup,"Camera","Create camera with null controller (auto-frame selected layers)", function(){
             var c=getComp(); if(!c) return;
             app.beginUndoGroup("AE Panel - Camera Rig");
@@ -1087,6 +1050,122 @@ function AE_Utility_Panel(thisObj) {
         btn(utilSec.btnGroup, "Reset", "Reset all transforms: position, scale, rotation and opacity", function(){
             resetLayerTransforms();
         }, 38);
+
+        addSeparator();
+
+        // ===== TWIXTOR (COLLAPSIBLE) =====
+        var twixtorSec = g.add("group");
+        twixtorSec.orientation = "column";
+        twixtorSec.alignChildren = "fill";
+        twixtorSec.margins = 0;
+        twixtorSec.spacing = 4;
+
+        var twixtorHeaderBtn = twixtorSec.add("button", undefined, "Twixtor ▼");
+        twixtorHeaderBtn.preferredSize = [undefined, 20];
+        twixtorHeaderBtn.helpTip = "Twixtor helper tools";
+
+        var twixtorContent = twixtorSec.add("group");
+        twixtorContent.orientation = "column";
+        twixtorContent.alignChildren = "left";
+        twixtorContent.margins = 0;
+        twixtorContent.spacing = 2;
+        twixtorContent.visible = false;
+        twixtorContent.maximumSize = [9999, 0];
+
+        var isTwixtorExpanded = false;
+
+        twixtorHeaderBtn.onClick = function() {
+            isTwixtorExpanded = !isTwixtorExpanded;
+            twixtorContent.visible = isTwixtorExpanded;
+            twixtorContent.maximumSize = isTwixtorExpanded ? [9999, 9999] : [9999, 0];
+            twixtorHeaderBtn.text = isTwixtorExpanded ? "Twixtor ▲" : "Twixtor ▼";
+            win.layout.layout(true);
+        };
+
+        // Align Keys button
+        var twixtorRow = twixtorContent.add("group");
+        twixtorRow.orientation = "row";
+        twixtorRow.alignChildren = "left";
+        twixtorRow.margins = 0;
+        twixtorRow.spacing = 3;
+
+        btn(twixtorRow, "Seq Keys", "Snap selected keyframes to first key (1-frame spacing)", function(){
+            var c=getComp(); if(!c) return;
+            var sel=c.selectedLayers;
+            if(sel.length===0) return;
+
+            app.beginUndoGroup("AE Panel - Align Keys");
+
+            var frameDuration = 1 / c.frameRate;
+
+            for(var i=0;i<sel.length;i++){
+                var layer = sel[i];
+
+                // UI REFRESH: Update progress and refresh UI every layer
+                updateProgress(i + 1, sel.length, "Aligning Time Remap");
+                if (i % 3 === 0) {
+                    app.refresh();
+                }
+
+                try {
+                    // Get Time Remap property
+                    var timeRemap = layer.property("ADBE Time Remapping");
+                    if (!timeRemap) continue;
+
+                    // Get all selected keyframes EXCEPT the last one
+                    var selectedKeys = [];
+                    var totalKeys = timeRemap.numKeys;
+                    for (var k = 1; k <= totalKeys - 1; k++) {
+                        if (timeRemap.keySelected(k)) {
+                            selectedKeys.push({
+                                index: k,
+                                time: timeRemap.keyTime(k),
+                                value: timeRemap.keyValue(k)
+                            });
+                        }
+                    }
+
+                    // Skip if less than 2 keys selected
+                    if (selectedKeys.length < 2) continue;
+
+                    // Keep first selected key's time as anchor
+                    var startTime = selectedKeys[0].time;
+
+                    // Cache all values first
+                    var values = [];
+                    for (var m = 0; m < selectedKeys.length; m++) {
+                        values.push(selectedKeys[m].value);
+                    }
+
+                    // Remove in reverse order to avoid index shifting
+                    for (var m = selectedKeys.length - 1; m >= 0; m--) {
+                        timeRemap.removeKey(selectedKeys[m].index);
+                    }
+
+                    // Reapply at consecutive 1-frame intervals
+                    for (var m = 0; m < values.length; m++) {
+                        timeRemap.setValueAtTime(
+                            startTime + (m * frameDuration),
+                            values[m]
+                        );
+                    }
+
+                } catch (layerError) {
+                    $.writeln("Error aligning Time Remap on '" + layer.name + "': " + layerError.message);
+                }
+            }
+
+            app.endUndoGroup();
+
+            // Reset progress bar after operation
+            if (app && app.setProgressBar) {
+                try {
+                    app.setProgressBar(0, 100);
+                } catch (e) {}
+            }
+        }, 55);
+
+        btn(twixtorRow, "Sequence", "Arrange selected layers end-to-end (no gaps)", sequenceSelectedLayers, 55);
 
         addSeparator();
 
@@ -1264,7 +1343,6 @@ function AE_Utility_Panel(thisObj) {
         tRow1.orientation = "row";
         tRow1.spacing = 3;
         btn(tRow1, "Crop Comp", "Crop composition to layer bounds (supports rotation & scale)", cropCompToSelection, 60);
-        btn(tRow1, "Sequence", "Arrange selected layers end-to-end (no gaps)", sequenceSelectedLayers, 55);
 
         win.layout.layout(true);
         return win;
