@@ -956,28 +956,33 @@ function AE_Utility_Panel(thisObj) {
         }, 38);
 
         btn(createRow,"Text","Create text layer for typography and titles", function(){
-            perSelection(function(c,l,i){
-                var t=c.layers.addText("Text "+(i+1)); t.label=0;
-                app.refresh();
-                try {
-                    var sourceRect = t.sourceRectAtTime(c.time, false);
-                    var dx = sourceRect.left + sourceRect.width / 2;
-                    var dy = sourceRect.top + sourceRect.height / 2;
-
-                    var currentAnchor = t.anchorPoint.value;
-                    var currentPos = t.position.value;
-
-                    t.anchorPoint.setValue([
-                        currentAnchor[0] + dx,
-                        currentAnchor[1] + dy
-                    ]);
-                    t.position.setValue([
-                        currentPos[0] + dx,
-                        currentPos[1] + dy
-                    ]);
-                } catch(e) {}
-                if(l){t.startTime=l.startTime;t.inPoint=l.inPoint;t.outPoint=l.outPoint;t.moveBefore(l);}
-            },true);
+            var c = getComp(); if (!c) return;
+            app.beginUndoGroup("AE Panel - Text");
+            var targetLayer = c.selectedLayers.length
+                ? c.selectedLayers[0]
+                : null;
+            var t = c.layers.addText("Text"); t.label = 1;
+            $.sleep(100); // Wait for AE to register text layer
+            app.refresh();
+            try {
+                var rect = t.sourceRectAtTime(c.time, false);
+                // Only center if we got valid bounds
+                if (rect && rect.width > 0 && rect.height > 0) {
+                    var dx = rect.left + rect.width / 2;
+                    var dy = rect.top + rect.height / 2;
+                    var anch = t.anchorPoint.value;
+                    var pos = t.position.value;
+                    t.anchorPoint.setValue([anch[0] + dx, anch[1] + dy]);
+                    t.position.setValue([pos[0] + dx, pos[1] + dy]);
+                }
+            } catch(e) {}
+            if (targetLayer) {
+                t.startTime = targetLayer.startTime;
+                t.inPoint   = targetLayer.inPoint;
+                t.outPoint  = targetLayer.outPoint;
+                t.moveBefore(targetLayer);
+            }
+            app.endUndoGroup();
         }, 38);
 
         addSeparator();
