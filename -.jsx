@@ -927,8 +927,13 @@ function AE_Utility_Panel(thisObj) {
                     }
                     n.moveBefore(l);
                     if(l.threeDLayer===true) n.threeDLayer=true;
+                    try {
+                        var worldPos=l.toWorld(l.anchorPoint.value);
+                        n.position.setValue(l.threeDLayer ? [worldPos[0], worldPos[1], worldPos[2]] : [worldPos[0], worldPos[1]]);
+                    } catch (e) {
+                        try { n.position.setValue(l.position.value); } catch (e2) {}
+                    }
                     l.parent=n;
-                    try { n.position.setValue(l.position.value); } catch (e) {}
                 }
             },true);
         }, 38);
