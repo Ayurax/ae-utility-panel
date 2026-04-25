@@ -61,8 +61,17 @@ function updateProgress(current, total, label) {
     }
 
     // Log progress for debugging
-    if (label) {
-        $.writeln(label + " (" + current + "/" + total + ")");
+    // (removed non-essential debug output)
+}
+
+// ============================================================================
+// PROGRESS BAR RESET HELPER
+// ============================================================================
+function resetProgressBar() {
+    if (app && app.setProgressBar) {
+        try {
+            app.setProgressBar(0, 100);
+        } catch (e) {}
     }
 }
 
@@ -123,7 +132,6 @@ function shiftKeyframes(prop, dx, dy, dz, is3D) {
             shifted = [old[0] + dx, old[1] + dy];
         }
 
-        // Add key at new time with shifted value
         prop.setValueAtTime(keyData[k].time, shifted);
         var newKeyIndex = prop.numKeys;
 
@@ -504,98 +512,9 @@ function decomposeSelectedPrecomps_Advanced() {
 
     app.endUndoGroup();
 
-    // Clear/reset progress bar after operation completes
-    updateProgress(targets.length, targets.length, "Decompose complete");
-    if (app && app.setProgressBar) {
-        try {
-            app.setProgressBar(0, 100);
-        } catch (e) {}
-    }
+    resetProgressBar();
 }
 
-
-
-// ============================================================================
-// CENTER ANCHOR POINT
-// ============================================================================
-function centerAnchorPoint_SelectedLayers() {
-    var comp = AE.requireComp();
-    if (!comp) return;
-
-    var selectedLayers = AE.requireSelection(comp);
-    if (!selectedLayers) return;
-
-    app.beginUndoGroup("AE Panel - Center Anchor");
-
-    var errors = [];
-    var currentTime = comp.time;
-
-    try {
-        for (var i = 0; i < selectedLayers.length; i++) {
-            var layer = selectedLayers[i];
-
-            // Check if sourceRectAtTime is supported
-            if (typeof layer.sourceRectAtTime !== "function") {
-                errors.push(layer.name + ": sourceRectAtTime not supported");
-                continue;
-            }
-
-            try {
-                var sourceRect = layer.sourceRectAtTime(currentTime, false);
-
-                // sourceRectAtTime returns in anchor-relative space (anchor = origin).
-                // left+width/2 and top+height/2 are the displacement from anchor to content center.
-                var dx = sourceRect.left + sourceRect.width  / 2;
-                var dy = sourceRect.top  + sourceRect.height / 2;
-
-                var anchorProp      = layer.anchorPoint;
-                var posProp         = layer.position;
-                var currentAnchor   = anchorProp.value;
-                var currentPosition = posProp.value;
-                if (!currentAnchor || !currentPosition) continue;
-
-                var is3D = layer.threeDLayer;
-
-                var newAnchor = is3D
-                    ? [currentAnchor[0] + dx, currentAnchor[1] + dy, currentAnchor[2]]
-                    : [currentAnchor[0] + dx, currentAnchor[1] + dy];
-                var newPosition = is3D
-                    ? [currentPosition[0] + dx, currentPosition[1] + dy, currentPosition[2]]
-                    : [currentPosition[0] + dx, currentPosition[1] + dy];
-
-                var origAnchorKeys = anchorProp.numKeys;
-                if (origAnchorKeys > 0) {
-                    shiftKeyframes(anchorProp, dx, dy, 0, is3D);
-                } else {
-                    anchorProp.setValue(newAnchor);
-                }
-
-                var origPosKeys = posProp.numKeys;
-                if (origPosKeys > 0) {
-                    shiftKeyframes(posProp, dx, dy, 0, is3D);
-                } else {
-                    var newPosition = is3D
-                        ? [currentPosition[0] + dx, currentPosition[1] + dy, currentPosition[2]]
-                        : [currentPosition[0] + dx, currentPosition[1] + dy];
-                    posProp.setValue(newPosition);
-                }
-
-            } catch (layerError) {
-                errors.push(layer.name + ": " + layerError.message);
-            }
-        }
-
-    } catch (error) {
-        errors.push("Fatal error: " + error.message);
-    } finally {
-        app.endUndoGroup();
-    }
-
-    // Show single alert with all errors at the end (prevent alert spam)
-    if (errors.length > 0) {
-        alert("Center Anchor Point - Issues:\n" + errors.join("\n"));
-    }
-}
 
 
 // ============================================================================
@@ -742,20 +661,13 @@ function cropCompToSelection() {
         comp.width = newWidth;
         comp.height = newHeight;
 
-        $.writeln("Crop complete: " + newWidth + "x" + newHeight + " (from " + validLayersFound + " layer(s))");
-
     } catch (e) {
         alert("Error cropping comp: " + e.message);
         $.writeln("Crop operation failed: " + e.message);
     } finally {
         app.endUndoGroup();
 
-        // Reset progress bar after crop operation
-        if (app && app.setProgressBar) {
-            try {
-                app.setProgressBar(0, 100);
-            } catch (e) {}
-        }
+        resetProgressBar();
     }
 }
 
@@ -933,7 +845,6 @@ function AE_Utility_Panel(thisObj) {
 
             app.beginUndoGroup("AE Panel - Text");
 
-            var idx = c.numLayers;
             var t = c.layers.addText("Text 1");
             t.label = 5;
 
@@ -1181,12 +1092,7 @@ function AE_Utility_Panel(thisObj) {
 
             app.endUndoGroup();
 
-            // Reset progress bar after operation
-            if (app && app.setProgressBar) {
-                try {
-                    app.setProgressBar(0, 100);
-                } catch (e) {}
-            }
+            resetProgressBar();
         }, 55);
 
         btn(twixtorRow, "Sequence", "Arrange selected layers end-to-end (no gaps)", sequenceSelectedLayers, 55);
