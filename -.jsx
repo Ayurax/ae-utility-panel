@@ -955,11 +955,46 @@ function AE_Utility_Panel(thisObj) {
             app.endUndoGroup();
         }, 38);
 
-        btn(createRow,"Text","Create text layer for typography and titles", function(){
-            perSelection(function(c,l,i){
-                var t=c.layers.addText("Text "+(i+1)); t.label=9;
-                if(l){t.startTime=l.startTime;t.inPoint=l.inPoint;t.outPoint=l.outPoint;t.moveBefore(l);}
-            },true);
+        btn(createRow, "Text", "Create text layer for typography and titles", function () {
+            var c = AE.requireComp();
+            if (!c) return;
+
+            var targetLayer = c.selectedLayers.length ? c.selectedLayers[0] : null;
+
+            app.beginUndoGroup("AE Panel - Text");
+
+            var idx = c.numLayers;
+            var t = c.layers.addText("Text 1");
+            t.label = 5;
+
+            if (targetLayer) {
+                t.startTime = targetLayer.startTime;
+                t.inPoint = targetLayer.inPoint;
+                t.outPoint = targetLayer.outPoint;
+                t.moveBefore(targetLayer);
+            }
+
+            // Force AE to compute text bounds
+            app.endUndoGroup();
+            app.beginUndoGroup("AE Panel - Text Anchor");
+            $.sleep(200);
+            app.refresh();
+
+            try {
+                var rect = t.sourceRectAtTime(c.time, false);
+                if (rect && rect.width > 0) {
+                    var cx = rect.left + rect.width / 2;
+                    var cy = rect.top + rect.height / 2;
+                    var a = t.anchorPoint.value;
+                    var p = t.position.value;
+                    t.anchorPoint.setValue([a[0] + cx, a[1] + cy]);
+                    t.position.setValue([p[0] + cx, p[1] + cy]);
+                }
+            } catch (e) {
+                $.writeln("Anchor center failed: " + e.message);
+            }
+
+            app.endUndoGroup();
         }, 38);
 
         addSeparator();
@@ -1025,6 +1060,29 @@ function AE_Utility_Panel(thisObj) {
                 } catch (e) {}
             }
         }, 55);
+
+        btn(utilSec.btnGroup,"Camera","Create camera with null controller (auto-frame selected layers)", function(){
+            var c=getComp(); if(!c) return;
+            app.beginUndoGroup("AE Panel - Camera Rig");
+            var cam=c.layers.addCamera("Camera",[c.width/2,c.height/2]);
+            var ctl=c.layers.addNull();
+            ctl.name="Camera Controller";ctl.threeDLayer=true;ctl.motionBlur=true;ctl.label=16;
+
+            if(c.selectedLayers.length){
+                var sel=c.selectedLayers;
+                var minIn=sel[0].inPoint,maxOut=sel[0].outPoint;
+                for(var i=1;i<sel.length;i++){
+                    if(sel[i].inPoint<minIn)minIn=sel[i].inPoint;
+                    if(sel[i].outPoint>maxOut)maxOut=sel[i].outPoint;
+                }
+                cam.startTime=ctl.startTime=minIn;
+                cam.inPoint=ctl.inPoint=minIn;
+                cam.outPoint=ctl.outPoint=maxOut;
+            }
+
+            ctl.moveBefore(cam);cam.parent=ctl;
+            app.endUndoGroup();
+        }, 70);
 
         addSeparator();
 
@@ -1116,40 +1174,6 @@ function AE_Utility_Panel(thisObj) {
         btn(resetRow, "Reset All", "Reset all: position, scale, rotation, and opacity", function(){
             resetLayerTransforms();
         }, 55);
-
-        addSeparator();
-
-        // ===== CAMERA =====
-        var camSec = addSection("Camera");
-
-        // STYLE: Apply bold header styling for consistency with other sections
-        var camLabel = camSec.section.children[0];
-        try {
-            camLabel.graphics.font = ScriptUI.newFont("Arial", "BOLD", 11);
-        } catch (e) {}
-
-        btn(camSec.btnGroup,"Camera Rig","Create camera with null controller (auto-frame selected layers)", function(){
-            var c=getComp(); if(!c) return;
-            app.beginUndoGroup("AE Panel - Camera Rig");
-            var cam=c.layers.addCamera("Camera",[c.width/2,c.height/2]);
-            var ctl=c.layers.addNull();
-            ctl.name="Camera Controller";ctl.threeDLayer=true;ctl.motionBlur=true;ctl.label=16;
-
-            if(c.selectedLayers.length){
-                var sel=c.selectedLayers;
-                var minIn=sel[0].inPoint,maxOut=sel[0].outPoint;
-                for(var i=1;i<sel.length;i++){
-                    if(sel[i].inPoint<minIn)minIn=sel[i].inPoint;
-                    if(sel[i].outPoint>maxOut)maxOut=sel[i].outPoint;
-                }
-                cam.startTime=ctl.startTime=minIn;
-                cam.inPoint=ctl.inPoint=minIn;
-                cam.outPoint=ctl.outPoint=maxOut;
-            }
-
-            ctl.moveBefore(cam);cam.parent=ctl;
-            app.endUndoGroup();
-        }, 70);
 
         addSeparator();
 
@@ -1328,162 +1352,6 @@ function AE_Utility_Panel(thisObj) {
         tRow1.spacing = 3;
         btn(tRow1, "Crop Comp", "Crop composition to layer bounds (supports rotation & scale)", cropCompToSelection, 60);
         btn(tRow1, "Sequence", "Arrange selected layers end-to-end (no gaps)", sequenceSelectedLayers, 55);
-
-        // --- ROW 3: Plugin Launcher ---
-        var toolsLaunchSec = toolsContent.add("group");
-        toolsLaunchSec.orientation = "column";
-        toolsLaunchSec.alignChildren = "left";
-        toolsLaunchSec.margins = 0;
-        toolsLaunchSec.spacing = 2;
-
-        var launchLabel = toolsLaunchSec.add("statictext", undefined, "Plugin & Script Launcher");
-        // SAFE: Use try-catch for font styling; fallback to default if unavailable
-        try {
-            launchLabel.graphics.font = ScriptUI.newFont("Arial", "BOLD", 11);
-        } catch (e) {
-            // Fallback to system default font
-        }
-
-        var tRow2 = toolsLaunchSec.add("group");
-        tRow2.orientation = "row";
-        tRow2.spacing = 3;
-
-        // Load saved tools from AE preferences
-        var myFavs = [];
-        if (app.settings.haveSetting("MyAEPanel", "FavTools")) {
-            myFavs = app.settings.getSetting("MyAEPanel", "FavTools").split("||");
-        } else {
-            myFavs = ["Menu:Align", "Menu:Character"]; // Defaults
-        }
-
-        var ddLauncher = tRow2.add("dropdownlist", undefined, []);
-
-        // Helper: Extract clean display name from stored value
-        function getDisplayName(storedValue) {
-            if (storedValue.indexOf("Menu:") === 0) {
-                // For Menu: just return the plugin name
-                return storedValue.substring(5);
-            } else if (storedValue.indexOf("File:") === 0) {
-                // For File: extract just the filename (no path)
-                var filePath = storedValue.substring(5);
-                var name = filePath.split("\\").pop(); // Get last part after backslash
-                if (!name) name = filePath.split("/").pop(); // Fallback for forward slash
-                return name || filePath;
-            }
-            return storedValue;
-        }
-
-        // Populate dropdown with clean display names, store full data
-        for (var idx = 0; idx < myFavs.length; idx++) {
-            var stored = myFavs[idx];
-            if (!stored) continue;
-
-            var displayName = getDisplayName(stored);
-            var item = ddLauncher.add("item", displayName);
-            // Store the full command/path in the item's data property
-            item.data = stored;
-        }
-
-        if (ddLauncher.items.length > 0) ddLauncher.selection = 0;
-        ddLauncher.preferredSize.width = 80;
-
-        function saveLauncherSettings() {
-            var arr = [];
-            // Save only the .data values (full command/path), not display text
-            for(var i=0; i<ddLauncher.items.length; i++) {
-                arr.push(ddLauncher.items[i].data);
-            }
-            app.settings.saveSetting("MyAEPanel", "FavTools", arr.join("||"));
-        }
-
-        // Cache for menu command IDs to avoid rescanning every click
-        var menuCommandCache = {};
-
-        btn(tRow2, "▶", "Execute the selected tool/plugin from dropdown", function(){
-            if (!ddLauncher.selection) return;
-            // CRITICAL: Use .data (stored command) instead of .text (display name)
-            var sel = ddLauncher.selection.data;
-            app.beginUndoGroup("AE Panel - Launch");
-
-            if (sel.indexOf("Menu:") === 0) {
-                var cmd = sel.substring(5);
-                // Strategy 1: findMenuCommandId (works for built-in menus)
-                var id = app.findMenuCommandId(cmd);
-                if (id && id !== 0) {
-                    app.executeCommand(id);
-                } else {
-                    // Strategy 2: scan IDs to find plugin/panel commands exposed via Window menu
-                    var found = false;
-                    // Check cache first before scanning
-                    if (menuCommandCache[cmd] !== undefined) {
-                        app.executeCommand(menuCommandCache[cmd]);
-                        found = true;
-                    } else {
-                        // Scan with reduced ceiling (5000 covers all known AE commands)
-                        for (var scanId = 1; scanId <= 5000; scanId++) {
-                            try {
-                                var cmdName = app.menuCommandName(scanId);
-                                if (cmdName && cmdName.toLowerCase().indexOf(cmd.toLowerCase()) !== -1) {
-                                    menuCommandCache[cmd] = scanId;
-                                    app.executeCommand(scanId);
-                                    found = true;
-                                    break;
-                                }
-                            } catch(e) {}
-                        }
-                    }
-                    if (!found) {
-                        alert("Could not find plugin or menu command: " + cmd + "\nMake sure the plugin is installed and AE is restarted.");
-                    }
-                }
-            } else if (sel.indexOf("File:") === 0) {
-                var f = new File(sel.substring(5));
-                if (f.exists) $.evalFile(f);
-                else alert("Could not find script file:\n" + f.fsName);
-            }
-
-            app.endUndoGroup();
-        }, 24);
-
-        btn(tRow2, "+", "Add menu plugin or script file to launcher", function(){
-            var type = confirm("Click YES to add a Menu Plugin (e.g. 'Align', 'Duik').\nClick NO to browse for a Script File (.jsx).");
-            if (type) {
-                var cmd = prompt(
-                    "Enter the plugin name exactly as it appears in AE's Window menu.\n" +
-                    "Examples: 'Flow', 'Duik', 'Align', 'Motion Bro'",
-                    "Flow"
-                );
-                if (cmd) {
-                    var storedValue = "Menu:" + cmd;
-                    // Add item with clean display name but store full data
-                    var item = ddLauncher.add("item", cmd);
-                    item.data = storedValue;
-                    ddLauncher.selection = ddLauncher.items.length - 1;
-                    saveLauncherSettings();
-                }
-            } else {
-                var f = File.openDialog("Select a Script", "*.jsx;*.jsxbin");
-                if (f) {
-                    var storedValue = "File:" + f.fsName;
-                    // Extract clean filename for display
-                    var displayFileName = f.fsName.split("\\").pop();
-                    if (!displayFileName) displayFileName = f.fsName.split("/").pop();
-                    // Add item with clean filename but store full path
-                    var item = ddLauncher.add("item", displayFileName);
-                    item.data = storedValue;
-                    ddLauncher.selection = ddLauncher.items.length - 1;
-                    saveLauncherSettings();
-                }
-            }
-        }, 24);
-
-        btn(tRow2, "-", "Remove the selected tool from launcher", function(){
-            if (ddLauncher.selection && ddLauncher.items.length > 0) {
-                ddLauncher.remove(ddLauncher.selection);
-                if(ddLauncher.items.length > 0) ddLauncher.selection = 0;
-                saveLauncherSettings();
-            }
-        }, 24);
 
         win.layout.layout(true);
         return win;
