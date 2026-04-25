@@ -1024,43 +1024,6 @@ function AE_Utility_Panel(thisObj) {
             app.endUndoGroup();
         }, 50);
 
-        btn(utilSec.btnGroup, "Align Keys", "Snap selected keyframes to first key (1-frame spacing)", function(){
-            var c=getComp(); if(!c) return;
-            var fd=1/c.frameRate;
-            app.beginUndoGroup("AE Panel - Align Keys");
-            var sel=c.selectedLayers;
-            for(var i=0;i<sel.length;i++){
-                // UI REFRESH: Update progress and refresh UI every 3 layers
-                if (i % 3 === 0) {
-                    updateProgress(i + 1, sel.length, "Aligning keyframes");
-                    app.refresh();
-                }
-
-                var props=sel[i].selectedProperties;
-                for(var j=0;j<props.length;j++){
-                    var p=props[j];
-                    if(!p||p.numKeys<2)continue;
-                    var isTR=(p.matchName==="ADBE TimeRemapping");
-                    var last=p.numKeys,keys=[];
-                    for(var k=1;k<=p.numKeys;k++)
-                        if(p.keySelected(k)&&!(isTR&&k===last))keys.push(k);
-                    if(keys.length>1){
-                        var t0=p.keyTime(keys[0]),vals=[];
-                        for(var m=0;m<keys.length;m++)vals.push(p.keyValue(keys[m]));
-                        for(var m=keys.length-1;m>=0;m--)p.removeKey(keys[m]);
-                        for(var m=0;m<vals.length;m++)p.setValueAtTime(t0+m*fd,vals[m]);
-                    }
-                }
-            }
-            app.endUndoGroup();
-            // Reset progress bar after operation
-            if (app && app.setProgressBar) {
-                try {
-                    app.setProgressBar(0, 100);
-                } catch (e) {}
-            }
-        }, 55);
-
         btn(utilSec.btnGroup,"Camera","Create camera with null controller (auto-frame selected layers)", function(){
             var c=getComp(); if(!c) return;
             app.beginUndoGroup("AE Panel - Camera Rig");
@@ -1084,96 +1047,179 @@ function AE_Utility_Panel(thisObj) {
             app.endUndoGroup();
         }, 70);
 
+        btn(utilSec.btnGroup, "Reset", "Reset all transforms: position, scale, rotation and opacity", function(){
+            resetLayerTransforms();
+        }, 38);
+
+        btn(utilSec.btnGroup, "Del FX", "Remove effects by name from selected layers", function(){
+            var c = AE.requireComp();
+            if (!c) return;
+
+            var sel = c.selectedLayers;
+            if (sel.length === 0) {
+                alert("Select at least one layer");
+                return;
+            }
+
+            var fxName = prompt(
+                "Enter effect name to remove:\n(exactly as it appears in AE effects panel)",
+                ""
+            );
+            if (!fxName || fxName === "") return;
+
+            app.beginUndoGroup("AE Panel - Delete Effect");
+
+            var removedCount = 0;
+
+            for (var i = 0; i < sel.length; i++) {
+                var layer = sel[i];
+
+                try {
+                    var effects = layer.property("ADBE Effect Parade");
+                    if (!effects) continue;
+
+                    // Loop effects in reverse order to avoid index shifting
+                    for (var e = effects.numProperties; e >= 1; e--) {
+                        var effect = effects.property(e);
+                        if (!effect) continue;
+
+                        // Match by display name (case insensitive)
+                        if (effect.name.toLowerCase() === fxName.toLowerCase()) {
+                            effect.remove();
+                            removedCount++;
+                        }
+                    }
+
+                } catch (layerError) {
+                    $.writeln("Error processing layer '" + layer.name + "': " + layerError.message);
+                }
+            }
+
+            app.endUndoGroup();
+
+            // Show result
+            if (removedCount > 0) {
+                alert("Removed " + removedCount + " instance(s) of '" + fxName + "'");
+            } else {
+                alert("Effect '" + fxName + "' not found on any selected layer.\nMake sure the name matches exactly as shown in AE.");
+            }
+        }, 45);
+
         addSeparator();
 
-        // ===== TRANSFORM (COLLAPSIBLE) =====
-        var resetSec = g.add("group");
-        resetSec.orientation = "column";
-        resetSec.alignChildren = "fill";
-        resetSec.margins = 0;
-        resetSec.spacing = 4;
+        // ===== TWIXTOR (COLLAPSIBLE) =====
+        var twixtorSec = g.add("group");
+        twixtorSec.orientation = "column";
+        twixtorSec.alignChildren = "fill";
+        twixtorSec.margins = 0;
+        twixtorSec.spacing = 4;
 
-        var resetHeaderBtn = resetSec.add("button", undefined, "Transform Reset ▼");
-        resetHeaderBtn.preferredSize = [undefined, 20];
-        resetHeaderBtn.helpTip = "Reset individual transform properties or all at once";
+        var twixtorHeaderBtn = twixtorSec.add("button", undefined, "Twixtor ▼");
+        twixtorHeaderBtn.preferredSize = [undefined, 20];
+        twixtorHeaderBtn.helpTip = "Twixtor helper tools";
 
-        var resetContent = resetSec.add("group");
-        resetContent.orientation = "column";
-        resetContent.alignChildren = "left";
-        resetContent.margins = 0;
-        resetContent.spacing = 2;
-        resetContent.visible = false;
-        resetContent.maximumSize = [9999, 0];
+        var twixtorContent = twixtorSec.add("group");
+        twixtorContent.orientation = "column";
+        twixtorContent.alignChildren = "left";
+        twixtorContent.margins = 0;
+        twixtorContent.spacing = 2;
+        twixtorContent.visible = false;
+        twixtorContent.maximumSize = [9999, 0];
 
-        var isResetExpanded = false;
+        var isTwixtorExpanded = false;
 
-        resetHeaderBtn.onClick = function() {
-            isResetExpanded = !isResetExpanded;
-            resetContent.visible = isResetExpanded;
-            resetContent.maximumSize = isResetExpanded ? [9999, 9999] : [9999, 0];
-            resetHeaderBtn.text = isResetExpanded ? "Transform Reset ▲" : "Transform Reset ▼";
+        twixtorHeaderBtn.onClick = function() {
+            isTwixtorExpanded = !isTwixtorExpanded;
+            twixtorContent.visible = isTwixtorExpanded;
+            twixtorContent.maximumSize = isTwixtorExpanded ? [9999, 9999] : [9999, 0];
+            twixtorHeaderBtn.text = isTwixtorExpanded ? "Twixtor ▲" : "Twixtor ▼";
             win.layout.layout(true);
         };
 
-        var resetRow = resetContent.add("group");
-        resetRow.orientation = "row";
-        resetRow.alignChildren = "left";
-        resetRow.margins = 0;
-        resetRow.spacing = 3;
+        // Align Keys button
+        var twixtorRow = twixtorContent.add("group");
+        twixtorRow.orientation = "row";
+        twixtorRow.alignChildren = "left";
+        twixtorRow.margins = 0;
+        twixtorRow.spacing = 3;
 
-        btn(resetRow, "Position", "Reset position to center of composition", function(){
-            var c = AE.requireComp(); if(!c) return;
-            var sel = c.selectedLayers; if(sel.length === 0) return;
-            app.beginUndoGroup("AE Panel - Reset Position");
-            for (var i = 0; i < sel.length; i++) {
-                var l = sel[i];
-                hardReset(l.position, TransformDefaults.position(l, c));
-            }
-            app.endUndoGroup();
-        }, 50);
+        btn(twixtorRow, "Seq Keys", "Snap selected keyframes to first key (1-frame spacing)", function(){
+            var c=getComp(); if(!c) return;
+            var sel=c.selectedLayers;
+            if(sel.length===0) return;
 
-        btn(resetRow, "Scale", "Reset scale to 100% (unscaled)", function(){
-            var c = AE.requireComp(); if(!c) return;
-            var sel = c.selectedLayers; if(sel.length === 0) return;
-            app.beginUndoGroup("AE Panel - Reset Scale");
-            for (var i = 0; i < sel.length; i++) {
-                var l = sel[i];
-                hardReset(l.scale, TransformDefaults.scale(l));
-            }
-            app.endUndoGroup();
-        }, 45);
+            app.beginUndoGroup("AE Panel - Align Keys");
 
-        btn(resetRow, "Rotation", "Reset rotation to 0 degrees (unrotated)", function(){
-            var c = AE.requireComp(); if(!c) return;
-            var sel = c.selectedLayers; if(sel.length === 0) return;
-            app.beginUndoGroup("AE Panel - Reset Rotation");
-            for (var i = 0; i < sel.length; i++) {
-                var l = sel[i];
-                if (l.threeDLayer) {
-                    hardReset(l.orientation, TransformDefaults.rotation(l));
-                    hardReset(l.rotationX, 0);
-                    hardReset(l.rotationY, 0);
-                    hardReset(l.rotationZ, 0);
-                } else {
-                    hardReset(l.rotation, TransformDefaults.rotation(l));
+            var frameDuration = 1 / c.frameRate;
+
+            for(var i=0;i<sel.length;i++){
+                var layer = sel[i];
+
+                // UI REFRESH: Update progress and refresh UI every layer
+                updateProgress(i + 1, sel.length, "Aligning Time Remap");
+                if (i % 3 === 0) {
+                    app.refresh();
+                }
+
+                try {
+                    // Get Time Remap property
+                    var timeRemap = layer.property("ADBE Time Remapping");
+                    if (!timeRemap) continue;
+
+                    // Get all selected keyframes EXCEPT the last one
+                    var selectedKeys = [];
+                    var totalKeys = timeRemap.numKeys;
+                    for (var k = 1; k <= totalKeys - 1; k++) {
+                        if (timeRemap.keySelected(k)) {
+                            selectedKeys.push({
+                                index: k,
+                                time: timeRemap.keyTime(k),
+                                value: timeRemap.keyValue(k)
+                            });
+                        }
+                    }
+
+                    // Skip if less than 2 keys selected
+                    if (selectedKeys.length < 2) continue;
+
+                    // Keep first selected key's time as anchor
+                    var startTime = selectedKeys[0].time;
+
+                    // Cache all values first
+                    var values = [];
+                    for (var m = 0; m < selectedKeys.length; m++) {
+                        values.push(selectedKeys[m].value);
+                    }
+
+                    // Remove in reverse order to avoid index shifting
+                    for (var m = selectedKeys.length - 1; m >= 0; m--) {
+                        timeRemap.removeKey(selectedKeys[m].index);
+                    }
+
+                    // Reapply at consecutive 1-frame intervals
+                    for (var m = 0; m < values.length; m++) {
+                        timeRemap.setValueAtTime(
+                            startTime + (m * frameDuration),
+                            values[m]
+                        );
+                    }
+
+                } catch (layerError) {
+                    $.writeln("Error aligning Time Remap on '" + layer.name + "': " + layerError.message);
                 }
             }
-            app.endUndoGroup();
-        }, 50);
 
-        btn(resetRow, "Opacity", "Reset opacity to 100% (fully opaque)", function(){
-            var c = AE.requireComp(); if(!c) return;
-            var sel = c.selectedLayers; if(sel.length === 0) return;
-            app.beginUndoGroup("AE Panel - Reset Opacity");
-            for (var i = 0; i < sel.length; i++) {
-                hardReset(sel[i].opacity, 100);
+            app.endUndoGroup();
+
+            // Reset progress bar after operation
+            if (app && app.setProgressBar) {
+                try {
+                    app.setProgressBar(0, 100);
+                } catch (e) {}
             }
-            app.endUndoGroup();
-        }, 50);
-
-        btn(resetRow, "Reset All", "Reset all: position, scale, rotation, and opacity", function(){
-            resetLayerTransforms();
         }, 55);
+
+        btn(twixtorRow, "Sequence", "Arrange selected layers end-to-end (no gaps)", sequenceSelectedLayers, 55);
 
         addSeparator();
 
@@ -1276,27 +1322,27 @@ function AE_Utility_Panel(thisObj) {
             win.layout.layout(true);
         };
 
-        // --- ROW 1: Layer Ops ---
-        var toolsLayerSec = toolsContent.add("group");
-        toolsLayerSec.orientation = "column";
-        toolsLayerSec.alignChildren = "left";
-        toolsLayerSec.margins = 0;
-        toolsLayerSec.spacing = 2;
+        // --- ROW 1: Comp Tools ---
+        var toolsCompSec = toolsContent.add("group");
+        toolsCompSec.orientation = "column";
+        toolsCompSec.alignChildren = "left";
+        toolsCompSec.margins = 0;
+        toolsCompSec.spacing = 2;
 
-        var layerOpsLabel = toolsLayerSec.add("statictext", undefined, "Layer Operations");
+        var compToolsLabel = toolsCompSec.add("statictext", undefined, "Composition Tools");
         // SAFE: Use try-catch for font styling; fallback to default if unavailable
         try {
-            layerOpsLabel.graphics.font = ScriptUI.newFont("Arial", "BOLD", 11);
+            compToolsLabel.graphics.font = ScriptUI.newFont("Arial", "BOLD", 11);
         } catch (e) {
             // Fallback to system default font
         }
 
-        var tLayerRow = toolsLayerSec.add("group");
-        tLayerRow.orientation = "row";
-        tLayerRow.spacing = 3;
-        btn(tLayerRow, "Decomp", "Decompose precomp into parent composition (preserves keyframes & effects)", decomposeSelectedPrecomps_Advanced, 48);
+        var tRow1 = toolsCompSec.add("group");
+        tRow1.orientation = "row";
+        tRow1.spacing = 3;
+        btn(tRow1, "Decomp", "Decompose precomp into parent composition (preserves keyframes & effects)", decomposeSelectedPrecomps_Advanced, 48);
 
-        btn(tLayerRow, "Precomp", "Precompose selected layers separately with individual names", function(){
+        btn(tRow1, "EachComp", "Precompose each selected layer individually", function(){
             var comp = AE.requireComp();
             if (!comp) return;
 
@@ -1330,28 +1376,9 @@ function AE_Utility_Panel(thisObj) {
             }
 
             app.endUndoGroup();
-        }, 48);
+        }, 58);
 
-        // --- ROW 2: Comp Tools ---
-        var toolsCompSec = toolsContent.add("group");
-        toolsCompSec.orientation = "column";
-        toolsCompSec.alignChildren = "left";
-        toolsCompSec.margins = 0;
-        toolsCompSec.spacing = 2;
-
-        var compToolsLabel = toolsCompSec.add("statictext", undefined, "Composition Tools");
-        // SAFE: Use try-catch for font styling; fallback to default if unavailable
-        try {
-            compToolsLabel.graphics.font = ScriptUI.newFont("Arial", "BOLD", 11);
-        } catch (e) {
-            // Fallback to system default font
-        }
-
-        var tRow1 = toolsCompSec.add("group");
-        tRow1.orientation = "row";
-        tRow1.spacing = 3;
         btn(tRow1, "Crop Comp", "Crop composition to layer bounds (supports rotation & scale)", cropCompToSelection, 60);
-        btn(tRow1, "Sequence", "Arrange selected layers end-to-end (no gaps)", sequenceSelectedLayers, 55);
 
         win.layout.layout(true);
         return win;
