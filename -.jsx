@@ -986,6 +986,60 @@ function AE_Utility_Panel(thisObj) {
             }
         }, 45);
 
+        btn(utilSec.btnGroup, "2S Trim", "Trim selected layers to 2 seconds centered on playhead (1 sec each side)", function(){
+            var c = AE.requireComp();
+            if (!c) return;
+
+            var sel = c.selectedLayers;
+            if (sel.length === 0) {
+                alert("Select at least one layer");
+                return;
+            }
+
+            var playhead = c.time;
+            var trimIn = playhead - 1;
+            var trimOut = playhead + 1;
+
+            app.beginUndoGroup("AE Panel - 2S Trim");
+
+            var shortLayers = [];
+
+            for (var i = 0; i < sel.length; i++) {
+                var layer = sel[i];
+
+                try {
+                    var layerDuration = layer.outPoint - layer.inPoint;
+
+                    if (layerDuration < 2) {
+                        shortLayers.push(layer.name);
+                        continue;
+                    }
+
+                    var adjustedTrimIn = trimIn;
+                    var adjustedTrimOut = trimOut;
+
+                    if (adjustedTrimIn < layer.inPoint) {
+                        adjustedTrimIn = layer.inPoint;
+                    }
+                    if (adjustedTrimOut > layer.outPoint) {
+                        adjustedTrimOut = layer.outPoint;
+                    }
+
+                    layer.inPoint = adjustedTrimIn;
+                    layer.outPoint = adjustedTrimOut;
+
+                } catch (layerError) {
+                    $.writeln("Error trimming layer '" + layer.name + "': " + layerError.message);
+                }
+            }
+
+            app.endUndoGroup();
+
+            if (shortLayers.length > 0) {
+                alert("These layers are shorter than 2 seconds and were skipped:\n" + shortLayers.join("\n"));
+            }
+        }, 45);
+
         addSeparator();
 
         // ===== TWIXTOR (COLLAPSIBLE) =====
