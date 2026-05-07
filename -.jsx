@@ -720,6 +720,23 @@ function AE_Utility_Panel(thisObj) {
         g.margins = 6;
         g.spacing = 4;
 
+        // ===== VERSION TITLE =====
+        var titleGroup = g.add("group");
+        titleGroup.orientation = "row";
+        titleGroup.alignment = ["center", "center"];
+
+        var titleText = titleGroup.add("statictext", undefined, "AE Tools  v1.0");
+        titleText.alignment = ["center", "center"];
+        try {
+            titleText.graphics.font = ScriptUI.newFont("Arial", "BOLD", 11);
+        } catch(e) {}
+
+        var titleSep = g.add("panel");
+        titleSep.alignChildren = "fill";
+        titleSep.margins = 0;
+        titleSep.height = 1;
+        titleSep.minimumSize = [0, 1];
+
         // ---------- helpers ----------
         function getComp() {
             return AE.requireComp();
@@ -932,7 +949,14 @@ function AE_Utility_Panel(thisObj) {
             resetLayerTransforms();
         }, 38);
 
-        btn(utilSec.btnGroup, "Del FX", "Remove effects by name from selected layers", function(){
+        var utilRow2 = utilSec.section.add("group");
+        utilRow2.orientation = "row";
+        utilRow2.alignment = ["center", "center"];
+        utilRow2.alignChildren = ["center", "center"];
+        utilRow2.margins = 0;
+        utilRow2.spacing = 3;
+
+        btn(utilRow2, "Del FX", "Remove effects by name from selected layers", function(){
             var c = AE.requireComp();
             if (!c) return;
 
@@ -986,7 +1010,7 @@ function AE_Utility_Panel(thisObj) {
             }
         }, 45);
 
-        btn(utilSec.btnGroup, "2S Trim", "Trim selected layers to 2 seconds centered on playhead (1 sec each side)", function(){
+        btn(utilRow2, "2S Trim", "Trim selected layers to 2 seconds centered on playhead (1 sec each side)", function(){
             var c = AE.requireComp();
             if (!c) return;
 
@@ -1168,7 +1192,7 @@ function AE_Utility_Panel(thisObj) {
         // Content group (hidden by default)
         var anchorContent = anchorSec.add("group");
         anchorContent.orientation = "column";
-        anchorContent.alignChildren = "fill";
+        anchorContent.alignChildren = ["center", "fill"];
         anchorContent.margins = 0;
         anchorContent.spacing = 2;
         anchorContent.visible = false;  // Start collapsed
@@ -1190,7 +1214,7 @@ function AE_Utility_Panel(thisObj) {
         for (var row = 0; row < 3; row++) {
             var rowGroup = anchorContent.add("group");
             rowGroup.orientation = "row";
-            rowGroup.alignChildren = "left";
+            rowGroup.alignment = ["center", "center"];
             rowGroup.margins = 0;
             rowGroup.spacing = 2;
 
@@ -1200,6 +1224,13 @@ function AE_Utility_Panel(thisObj) {
                 b.preferredSize = [18, 18];
                 b.minimumSize = [18, 18];
                 b.maximumSize = [18, 18];
+
+                try {
+                    b.graphics.backgroundColor = b.graphics.newBrush(
+                        b.graphics.BrushType.SOLID_COLOR,
+                        [0.2, 0.3, 0.6, 1]
+                    );
+                } catch(e) {}
 
                 (function (presetMode) {
                     b.onClick = function () {
