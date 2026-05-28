@@ -728,23 +728,10 @@ function moveLayersToCamera() {
             return;
         }
 
-        var camPos = activeCam.position.value;
-        var camPoint = activeCam.pointOfInterest.value;
-
-        var dx = camPoint[0] - camPos[0];
-        var dy = camPoint[1] - camPos[1];
-        var dz = camPoint[2] - camPos[2];
-
-        var dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
-        if (dist === 0) dist = 1;
-        var nx = dx / dist;
-        var ny = dy / dist;
-        var nz = dz / dist;
-
-        var targetDist = dist;
-        var targetX = camPos[0] + nx * targetDist;
-        var targetY = camPos[1] + ny * targetDist;
-        var targetZ = camPos[2] + nz * targetDist;
+        var camPOI = activeCam.pointOfInterest.value;
+        var targetX = camPOI[0];
+        var targetY = camPOI[1];
+        var targetZ = camPOI[2];
 
         var skippedLayers = [];
 
@@ -760,14 +747,10 @@ function moveLayersToCamera() {
                 layer.position.setValue([targetX, targetY, targetZ]);
 
                 try {
-                    var camOrient = activeCam.orientation.value;
-                    var camRotX = activeCam.rotationX.value;
-                    var camRotY = activeCam.rotationY.value;
-                    var camRotZ = activeCam.rotationZ.value;
-                    layer.orientation.setValue(camOrient);
-                    layer.rotationX.setValue(camRotX);
-                    layer.rotationY.setValue(camRotY);
-                    layer.rotationZ.setValue(camRotZ);
+                    layer.orientation.setValue([0, 0, 0]);
+                    layer.rotationX.setValue(0);
+                    layer.rotationY.setValue(0);
+                    layer.rotationZ.setValue(0);
                 } catch(e) {}
             } catch (layerError) {
                 $.writeln("Error on layer '" + layer.name + "': " + layerError.message);
